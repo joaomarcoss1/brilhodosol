@@ -1,0 +1,4 @@
+matricula,nome_completo,cpf,filial,cargo,salario,pin_inicial,entrada,saida_almoco,retorno_almoco,saida,horario_confirmado,observacao
+DB-000002,Givanilson Rodrigues de Oliveira,604.845.403-19,Brilho do Sol D Borges,Entregador de Mercadorias,1680.00,1169,07:00,12:00,14:00,18:00,sim,Atualizado pela coleta WhatsApp 10/07/2026
+AB-000003,Antônio Domingos da Conceição,031.607.533-79,Brilho do Sol Abençoado,Entregador de Mercadorias,1680.00,2484,07:00,12:00,14:00,18:00,sim,CPF estava em branco na coleta e foi preenchido pela ficha oficial
+AR-000011,Gilvan Fernandes Ramos,025.130.703-48,Brilho do Sol Filial 01 / BS 2,Entregador de Mercadorias,1680.00,3546,07:00,12:00,14:00,18:00,sim,Atualizado pela coleta WhatsApp 10/07/2026
