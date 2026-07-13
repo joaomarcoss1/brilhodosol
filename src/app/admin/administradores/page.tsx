@@ -3,85 +3,93 @@
 import {
   ResourceManager,
   activeBadge,
+  type ResourceField,
+  type TableColumn,
 } from "@/components/admin/ResourceManager";
 
-const fields = [
-  { name: "full_name", label: "Nome completo" },
-  { name: "email", label: "E-mail", type: "text" as const },
+const fields: ResourceField[] = [
+  { name: "full_name", label: "Nome completo", required: true },
+  { name: "email", label: "E-mail", type: "text", required: true },
   {
     name: "password",
-    label: "Senha inicial opcional",
-    type: "password" as const,
+    label: "Senha inicial",
+    type: "password",
     hiddenOnEdit: true,
-    placeholder:
-      "Use para criar login novo; deixe vazio para promover usuário existente",
+    placeholder: "Obrigatória para criar um login que ainda não existe",
   },
   {
     name: "role",
     label: "Permissão",
-    type: "select" as const,
+    type: "select",
+    required: true,
     options: [
       { label: "Admin master", value: "master_admin" },
-      { label: "Admin legado", value: "admin" },
       { label: "Admin geral", value: "admin_geral" },
-      { label: "Gerente de filial", value: "gerente_filial" },
       { label: "RH/Financeiro", value: "rh_financeiro" },
+      { label: "Gerente de filial", value: "gerente_filial" },
+      { label: "Admin legado", value: "admin" },
     ],
   },
   {
     name: "branch_id",
     label: "Filial principal",
-    type: "select" as const,
-    optionsEndpoint: "/api/admin/branches?status=active",
+    type: "select",
+    optionsEndpoint: "/api/admin/options/branches?status=all&screen=admins-v018",
     optionsKey: "branches",
     optionLabel: "name",
-  },
-  {
-    name: "allowed_branch_ids",
-    label: "Filiais permitidas",
-    placeholder: "IDs separados por vírgula; vazio = todas, conforme perfil",
+    placeholder: "Deixe vazio para acesso geral, conforme a permissão",
   },
   {
     name: "can_view_financial_data",
     label: "Pode ver dados financeiros",
-    type: "checkbox" as const,
+    type: "checkbox",
   },
-  { name: "active", label: "Ativo", type: "checkbox" as const },
+  { name: "active", label: "Ativo", type: "checkbox" },
 ];
+
+const columns: TableColumn[] = [
+  { key: "full_name", label: "Nome" },
+  { key: "email", label: "E-mail" },
+  { key: "role", label: "Permissão" },
+  {
+    key: "branches",
+    label: "Filial",
+    render: (item: any) => item.branches?.name || "Todas/geral",
+  },
+  {
+    key: "auth_user_id",
+    label: "Login",
+    render: (item: any) => item.auth_user_id ? "Vinculado" : "Pendente",
+  },
+  {
+    key: "can_view_financial_data",
+    label: "Financeiro",
+    render: (item: any) => (item.can_view_financial_data ? "Sim" : "Não"),
+  },
+  {
+    key: "active",
+    label: "Status",
+    render: (item: any) => activeBadge(item.active),
+  },
+];
+
+const defaults = {
+  role: "admin_geral",
+  branch_id: "",
+  active: true,
+  can_view_financial_data: false,
+};
 
 export default function Page() {
   return (
     <ResourceManager
       title="Gestão de administradores"
-      description="Somente admin master pode criar novo login ou promover um usuário existente pelo e-mail. Use perfil e filiais para controlar acesso."
+      description="Crie um login novo com nome, e-mail e senha inicial ou vincule um usuário já existente no Supabase Auth usando o mesmo e-mail. Gerente de filial precisa ter uma filial selecionada."
       endpoint="/api/admin/admins"
       collectionKey="admins"
       fields={fields}
-      columns={[
-        { key: "full_name", label: "Nome" },
-        { key: "email", label: "E-mail" },
-        { key: "role", label: "Permissão" },
-        {
-          key: "branches",
-          label: "Filial",
-          render: (item: any) => item.branches?.name || "Todas/geral",
-        },
-        {
-          key: "can_view_financial_data",
-          label: "Financeiro",
-          render: (item: any) => (item.can_view_financial_data ? "Sim" : "Não"),
-        },
-        {
-          key: "active",
-          label: "Status",
-          render: (item: any) => activeBadge(item.active),
-        },
-      ]}
-      defaultValues={{
-        role: "admin_geral",
-        active: true,
-        can_view_financial_data: false,
-      }}
+      columns={columns}
+      defaultValues={defaults}
     />
   );
 }

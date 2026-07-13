@@ -41,5 +41,23 @@ export async function GET(request: NextRequest) {
     data = fallback.data || [];
   }
 
-  return ok({ branches: data || [] });
+  const branches = (data || []).sort((a: any, b: any) => {
+    const order: Record<string, number> = {
+      "Brilho do Sol Matriz": 0,
+      "Brilho do Sol Vila Biné": 1,
+      "Brilho do Sol Construção": 2,
+      "Brilho do Sol Filial 1° de Maio": 3,
+    };
+    return (order[a.name] ?? 99) - (order[b.name] ?? 99) || String(a.name).localeCompare(String(b.name), "pt-BR");
+  });
+
+  if (!branches.length) {
+    return fail(
+      "Nenhuma matriz/filial foi encontrada. Execute a migration 017_v018_admin_performance_branches.sql no Supabase.",
+      409,
+      "BRANCHES_NOT_CONFIGURED",
+    );
+  }
+
+  return ok({ branches });
 }

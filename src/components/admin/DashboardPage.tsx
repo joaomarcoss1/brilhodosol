@@ -3,11 +3,13 @@
 import { AlertTriangle, Building2, Clock3, FileCheck2, TrendingUp, Users, WalletCards } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { Button } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
+import { ToastMessage } from "@/components/ui/feedback";
 import { adminFetch } from "@/lib/client/admin-api";
 import { formatMoney } from "@/lib/format";
 
-const cardConfig = [
+const detailedCardConfig = [
   ["activeEmployees", "Funcionários ativos", Users],
   ["branches", "Filiais ativas", Building2],
   ["punchesToday", "Pontos hoje", Clock3],
@@ -20,7 +22,15 @@ const cardConfig = [
   ["estimatedPayroll", "Folha estimada", WalletCards],
   ["openPayrolls", "Folhas abertas", FileCheck2],
   ["closedPayrolls", "Folhas fechadas", FileCheck2],
-  ["inconsistencyAlerts", "Alertas", AlertTriangle]
+  ["inconsistencyAlerts", "Alertas", AlertTriangle],
+] as const;
+
+const summaryCards = [
+  ["activeEmployees", "Funcionários ativos", Users],
+  ["activeBranches", "Filiais ativas", Building2],
+  ["pointsToday", "Pontos hoje", Clock3],
+  ["pendingReview", "Revisões pendentes", FileCheck2],
+  ["outsideRadius", "Fora do raio", AlertTriangle],
 ] as const;
 
 function BarList({ data }: { data: Array<{ label: string; value: number }> }) {
@@ -43,40 +53,80 @@ function BarList({ data }: { data: Array<{ label: string; value: number }> }) {
 }
 
 export function DashboardPage() {
-  const [data, setData] = useState<any>(null);
+  const [summary, setSummary] = useState<any>(null);
+  const [details, setDetails] = useState<any>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    adminFetch<any>("/api/admin/dashboard")
-      .then(setData)
+    adminFetch<any>("/api/admin/dashboard/summary?v=18")
+      .then((data) => setSummary(data.summary || null))
       .catch((err) => setError(err.message));
   }, []);
 
+  async function loadDetails() {
+    setLoadingDetails(true);
+    setError("");
+    try {
+      const data = await adminFetch<any>("/api/admin/dashboard?v=18");
+      setDetails(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar indicadores detalhados.");
+    } finally {
+      setLoadingDetails(false);
+    }
+  }
+
   return (
     <AdminShell>
-      <SectionTitle title="Dashboard" description="Indicadores reais de ponto, RH e folha com base no banco de dados." />
-      {error ? <p className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">{error}</p> : null}
-      {!data ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, index) => (
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <SectionTitle title="Dashboard" description="Resumo rápido para o painel abrir sem travamentos. Indicadores pesados são carregados somente quando solicitados." />
+        <Button variant="secondary" loading={loadingDetails} onClick={loadDetails}>
+          <TrendingUp className="h-4 w-4" />
+          {details ? "Atualizar detalhes" : "Carregar detalhes"}
+        </Button>
+      </div>
+
+      {error ? <ToastMessage type="error">{error}</ToastMessage> : null}
+
+      {!summary ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
             <div key={index} className="h-28 animate-pulse rounded-3xl border border-slate-200 bg-white shadow-sm" />
           ))}
         </div>
-      ) : null}
-      {data ? (
-        <div className="grid gap-4">
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {summaryCards.map(([key, label, Icon]) => (
+            <Card key={key} className="premium-surface">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="break-words text-xs font-black uppercase tracking-[0.10em] text-slate-500">{label}</p>
+                  <p className="mt-2 text-3xl font-black tracking-[-0.04em] text-slate-950">{summary[key] ?? 0}</p>
+                </div>
+                <span className="shrink-0 rounded-2xl bg-gradient-to-br from-brand-50 to-sun-50 p-3 text-brand-700 shadow-inner">
+                  <Icon className="h-5 w-5" />
+                </span>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {details ? (
+        <div className="mt-5 grid gap-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {cardConfig.map(([key, label, Icon]) => (
+            {detailedCardConfig.map(([key, label, Icon]) => (
               <Card key={key} className="premium-surface">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="break-words text-xs font-black uppercase tracking-[0.10em] text-slate-500">{label}</p>
                     <p className="mt-2 text-3xl font-black tracking-[-0.04em] text-slate-950">
                       {key === "estimatedPayroll"
-                        ? formatMoney(data.cards[key])
+                        ? formatMoney(details.cards[key])
                         : key === "overtimePeriod"
-                          ? `${Math.floor(data.cards[key] / 60)}h ${String(data.cards[key] % 60).padStart(2, "0")}min`
-                          : data.cards[key]}
+                          ? `${Math.floor(details.cards[key] / 60)}h ${String(details.cards[key] % 60).padStart(2, "0")}min`
+                          : details.cards[key]}
                     </p>
                   </div>
                   <span className="shrink-0 rounded-2xl bg-gradient-to-br from-brand-50 to-sun-50 p-3 text-brand-700 shadow-inner">
@@ -86,32 +136,32 @@ export function DashboardPage() {
               </Card>
             ))}
           </div>
-          {data.alerts.length ? (
+
+          {details.alerts?.length ? (
             <Card className="border-amber-200 bg-amber-50">
               <h2 className="mb-2 font-black text-amber-950">Alertas importantes</h2>
               <div className="grid gap-2 text-sm font-semibold text-amber-900">
-                {data.alerts.map((alert: string) => (
-                  <p key={alert}>{alert}</p>
-                ))}
+                {details.alerts.map((alert: string) => <p key={alert}>{alert}</p>)}
               </div>
             </Card>
           ) : null}
+
           <div className="grid gap-4 lg:grid-cols-3">
             <Card>
               <h2 className="mb-3 font-black">Funcionários por filial</h2>
-              <BarList data={data.totalByBranch.map((item: any) => ({ label: item.branch, value: item.total }))} />
+              <BarList data={(details.totalByBranch || []).map((item: any) => ({ label: item.branch, value: item.total }))} />
             </Card>
             <Card>
               <h2 className="mb-3 font-black">Atrasos por filial</h2>
-              <BarList data={data.charts.lateByBranch} />
+              <BarList data={details.charts?.lateByBranch || []} />
             </Card>
             <Card>
               <h2 className="mb-3 font-black">Custo de folha por filial</h2>
-              <BarList data={data.charts.payrollByBranch.map((item: any) => ({ label: item.label, value: Math.round(item.value) }))} />
+              <BarList data={(details.charts?.payrollByBranch || []).map((item: any) => ({ label: item.label, value: Math.round(item.value) }))} />
             </Card>
             <Card>
               <h2 className="mb-3 font-black">Horas extras por funcionário</h2>
-              <BarList data={(data.charts.overtimeByEmployee || []).map((item: any) => ({ label: item.label, value: Math.round(item.value) }))} />
+              <BarList data={(details.charts?.overtimeByEmployee || []).map((item: any) => ({ label: item.label, value: Math.round(item.value) }))} />
             </Card>
           </div>
         </div>

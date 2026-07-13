@@ -1,4 +1,5 @@
--- v017 Segurança Final e Homologação Produção
+-- v017 Segurança Final e Homologação Produção — VERSÃO CORRIGIDA E IDEMPOTENTE
+-- Substitui integralmente o arquivo anterior que falhava ao ser executado novamente.
 -- Correções incrementais e não destrutivas: RLS por filial, idempotência da folha,
 -- views seguras e proteção contra edição financeira indevida pelo acesso direto.
 
@@ -227,6 +228,29 @@ drop policy if exists "admins read audit logs" on public.audit_logs;
 drop policy if exists "admins can read admin users" on public.admin_users;
 drop policy if exists "master admins manage admin users" on public.admin_users;
 
+-- Torna esta migration idempotente: remove qualquer policy v017 criada em uma
+-- execução anterior antes de recriá-la. Assim, o arquivo pode ser executado
+-- novamente sem o erro PostgreSQL 42710 (policy already exists).
+do $$
+declare
+  policy_record record;
+begin
+  for policy_record in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and policyname like 'v017 %'
+  loop
+    execute format(
+      'drop policy if exists %I on %I.%I',
+      policy_record.policyname,
+      policy_record.schemaname,
+      policy_record.tablename
+    );
+  end loop;
+end
+$$;
+
 create policy "v017 admins read own admin profile" on public.admin_users
 for select to authenticated
 using (public.is_master_admin() or id = public.current_admin_id());
@@ -350,3 +374,11 @@ with check (
   public.has_financial_permission()
   and exists (select 1 from public.payroll_periods p where p.id = payroll_period_id and public.can_access_branch(p.branch_id))
 );
+
+
+-- Confirmação final da execução.
+do $$
+begin
+  raise notice 'Migration v017 corrigida aplicada com sucesso.';
+end
+$$;

@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, Edit3, FileSpreadsheet, Plus, Power, Save, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,10 @@ export type ResourceFilter = {
   optionValue?: string;
 };
 
+const EMPTY_FILTERS: ResourceFilter[] = [];
+const EMPTY_DEFAULT_VALUES: Record<string, unknown> = {};
+const EMPTY_OMIT_FIELDS: string[] = [];
+
 function renderPlain(value: React.ReactNode) {
   if (typeof value === "string" || typeof value === "number") return value;
   return value;
@@ -54,12 +58,12 @@ export function ResourceManager({
   collectionKey,
   fields,
   columns,
-  defaultValues = {},
+  defaultValues = EMPTY_DEFAULT_VALUES,
   disableShell = false,
-  filters = [],
+  filters = EMPTY_FILTERS,
   exportEndpoint,
   exportFileBase,
-  omitFieldNamesOnSave = []
+  omitFieldNamesOnSave = EMPTY_OMIT_FIELDS
 }: {
   title: string;
   description?: string;
@@ -88,7 +92,7 @@ export function ResourceManager({
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -99,35 +103,64 @@ export function ResourceManager({
     } finally {
       setLoading(false);
     }
-  }
+  }, [collectionKey, endpoint]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
+
+  const optionSources = [
+    ...fields.map((field) => ({ ...field, optionStoreKey: field.name })),
+    ...filters.map((filter) => ({ ...filter, name: filter.key, optionStoreKey: `filter:${filter.key}` }))
+  ].filter((field) => field.optionsEndpoint);
+
+  const optionSourcesKey = JSON.stringify(optionSources.map((field) => ({
+    endpoint: field.optionsEndpoint,
+    key: field.optionsKey,
+    label: field.optionLabel,
+    value: field.optionValue,
+    store: field.optionStoreKey || field.name
+  })));
 
   useEffect(() => {
-    const optionSources = [
-      ...fields.map((field) => ({ ...field, optionStoreKey: field.name })),
-      ...filters.map((filter) => ({ ...filter, name: filter.key, optionStoreKey: `filter:${filter.key}` }))
-    ];
-    optionSources
-      .filter((field) => field.optionsEndpoint)
-      .forEach((field) => {
-        adminFetch<any>(field.optionsEndpoint || "")
-          .then((data) => {
-            const rows = data[field.optionsKey || "items"] || [];
-            setOptions((current) => ({
-              ...current,
-              [field.optionStoreKey || field.name]: rows.map((row: any) => ({
-                label: row[field.optionLabel || "name"] || row.full_name || row.title,
-                value: String(row[field.optionValue || "id"] ?? "")
-              }))
-            }));
-          })
-          .catch(() => undefined);
+    let cancelled = false;
+    if (!optionSources.length) return () => { cancelled = true; };
+
+    Promise.all(optionSources.map(async (field) => {
+      const data = await adminFetch<any>(field.optionsEndpoint || "");
+      const rows = data[field.optionsKey || "items"] || [];
+      return {
+        storeKey: field.optionStoreKey || field.name,
+        values: rows.map((row: any) => ({
+          label: row[field.optionLabel || "name"] || row.full_name || row.title,
+          value: String(row[field.optionValue || "id"] ?? "")
+        }))
+      };
+    }))
+      .then((results) => {
+        if (cancelled) return;
+        setOptions((current) => {
+          const next = { ...current };
+          let changed = false;
+          for (const result of results) {
+            const previous = JSON.stringify(current[result.storeKey] || []);
+            const incoming = JSON.stringify(result.values);
+            if (previous !== incoming) {
+              next[result.storeKey] = result.values;
+              changed = true;
+            }
+          }
+          return changed ? next : current;
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Erro ao carregar opções do formulário.");
       });
-  }, [fields, filters]);
+
+    return () => { cancelled = true; };
+    // O conteúdo serializado impede loops quando páginas passam arrays inline.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionSourcesKey]);
 
   const visibleFields = useMemo(() => fields.filter((field) => !(editing && field.hiddenOnEdit)), [editing, fields]);
   const filteredItems = useMemo(() => {
@@ -172,7 +205,7 @@ export function ResourceManager({
 
   function startCreate() {
     setEditing(null);
-    setForm(defaultValues);
+    setForm({ ...defaultValues });
     setShowForm(true);
     setMessage("");
     setError("");

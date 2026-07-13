@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Lock, Plus, RefreshCw, ShieldCheck, Unlock, WalletCards } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { BrandMark } from "@/components/BrandMark";
 import { Badge } from "@/components/ui/badge";
@@ -42,12 +42,43 @@ export function PayrollPage() {
   const [closureReview, setClosureReview] = useState<any | null>(null);
   const [reopenReason, setReopenReason] = useState("");
   const [adminProfile, setAdminProfile] = useState<any | null>(null);
+  const [branchLoading, setBranchLoading] = useState(true);
+  const [branchError, setBranchError] = useState("");
+
+  const loadPayrollOptions = useCallback(async () => {
+    setBranchLoading(true);
+    setBranchError("");
+    try {
+      const [profileData, employeeData] = await Promise.all([
+        adminFetch<any>("/api/admin/me"),
+        adminFetch<any>("/api/admin/options/employees?v=18"),
+      ]);
+      setAdminProfile(profileData.admin || null);
+      setEmployees(employeeData.employees || []);
+
+      let branchRows: any[] = [];
+      try {
+        const branchData = await adminFetch<any>("/api/admin/options/branches?status=all&v=18");
+        branchRows = branchData.branches || [];
+      } catch {
+        const fallback = await adminFetch<any>("/api/admin/branches?status=all&v=18");
+        branchRows = fallback.branches || [];
+      }
+
+      if (!branchRows.length) {
+        throw new Error("Nenhuma filial foi encontrada. Execute a migration 017_v018_admin_performance_branches.sql no Supabase.");
+      }
+      setBranches(branchRows);
+    } catch (err) {
+      setBranchError(err instanceof Error ? err.message : "Erro ao carregar filiais e funcionários.");
+    } finally {
+      setBranchLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    adminFetch<any>("/api/admin/me").then((data) => setAdminProfile(data.admin || null)).catch(() => setAdminProfile(null));
-    adminFetch<any>("/api/admin/options/branches?status=all").then((data) => setBranches(data.branches || [])).catch(() => undefined);
-    adminFetch<any>("/api/admin/options/employees").then((data) => setEmployees(data.employees || [])).catch(() => undefined);
-  }, []);
+    loadPayrollOptions();
+  }, [loadPayrollOptions]);
 
   async function load(id?: string, filters = periodFilters) {
     try {
@@ -254,11 +285,21 @@ export function PayrollPage() {
                 <p className="text-xs font-semibold text-slate-500">Preencha o período e gere a prévia.</p>
               </div>
             </div>
+            {branchError ? (
+              <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">
+                <p>{branchError}</p>
+                <Button className="mt-2" size="sm" variant="secondary" onClick={loadPayrollOptions} loading={branchLoading}>Recarregar filiais</Button>
+              </div>
+            ) : (
+              <div className="mb-3 rounded-2xl border border-brand-100 bg-brand-50 p-3 text-xs font-bold text-brand-800">
+                {branchLoading ? "Carregando matriz e filiais..." : `${branches.length} unidade(s) disponível(is) para gerar e filtrar a folha.`}
+              </div>
+            )}
             <div className="grid gap-3">
               <Field label="Título"><Input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Ex.: Folha do mês atual" /></Field>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Tipo"><Select value={form.period_type} onChange={(event) => setForm({ ...form, period_type: event.target.value })}><option value="monthly">Mensal</option><option value="biweekly">Quinzenal</option><option value="daily">Diaristas</option><option value="custom">Personalizado</option></Select></Field>
-                <Field label="Filial/Matriz"><Select value={form.branch_id} onChange={(event) => setForm({ ...form, branch_id: event.target.value, employee_id: "" })}><option value="">Todas permitidas</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</Select></Field>
+                <Field label="Filial/Matriz"><Select disabled={branchLoading || Boolean(branchError)} value={form.branch_id} onChange={(event) => setForm({ ...form, branch_id: event.target.value, employee_id: "" })}><option value="">{branchLoading ? "Carregando unidades..." : "Todas as unidades permitidas"}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</Select></Field>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Funcionário"><Select value={form.employee_id} onChange={(event) => setForm({ ...form, employee_id: event.target.value })}><option value="">Todos do filtro</option>{availableEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}</Select></Field>
@@ -273,7 +314,7 @@ export function PayrollPage() {
                 <Field label="Fim"><Input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} /></Field>
               </div>
               <Field label="Observações"><Textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></Field>
-              <Button loading={loading} disabled={loading} onClick={generate}><Plus className="h-4 w-4" />Gerar folha</Button>
+              <Button loading={loading} disabled={loading || branchLoading || Boolean(branchError) || branches.length === 0} onClick={generate}><Plus className="h-4 w-4" />Gerar folha</Button>
             </div>
           </Card>
           <Card>
@@ -285,7 +326,7 @@ export function PayrollPage() {
               <Button size="sm" variant="ghost" onClick={() => load(undefined, periodFilters)} loading={loading}><RefreshCw className="h-4 w-4" /></Button>
             </div>
             <div className="mb-3 grid gap-2 sm:grid-cols-2">
-              <Field label="Filial/Matriz"><Select value={periodFilters.branchId} onChange={(event) => setPeriodFilters({ ...periodFilters, branchId: event.target.value })}><option value="">Todas</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</Select></Field>
+              <Field label="Filial/Matriz"><Select disabled={branchLoading || Boolean(branchError)} value={periodFilters.branchId} onChange={(event) => setPeriodFilters({ ...periodFilters, branchId: event.target.value })}><option value="">Todas as unidades</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</Select></Field>
               <Field label="Dia pgto."><Select value={periodFilters.paymentDay} onChange={(event) => setPeriodFilters({ ...periodFilters, paymentDay: event.target.value })}><option value="">Todos</option>{[5, 10, 15, 20, 25, 30].map((day) => <option key={day} value={day}>Dia {day}</option>)}</Select></Field>
               <Field label="Status"><Select value={periodFilters.status} onChange={(event) => setPeriodFilters({ ...periodFilters, status: event.target.value })}><option value="">Todos</option><option value="draft">Prévia</option><option value="incomplete_preview">Prévia incompleta</option><option value="reviewed">Revisada</option><option value="closed">Fechada</option><option value="closed_with_exceptions">Fechada com exceção</option><option value="paid">Paga</option></Select></Field>
               <Button className="self-end" variant="secondary" onClick={() => load(undefined, periodFilters)}>Aplicar filtros</Button>

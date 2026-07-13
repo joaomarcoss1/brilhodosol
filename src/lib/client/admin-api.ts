@@ -11,6 +11,8 @@ type CacheEntry = {
 };
 
 const adminMemoryCache = new Map<string, CacheEntry>();
+const adminInFlightRequests = new Map<string, Promise<unknown>>();
+let cachedAccessToken: { token: string; expiresAt: number } | null = null;
 const DEFAULT_GET_CACHE_MS = 45_000;
 const STATIC_OPTIONS_CACHE_MS = 5 * 60_000;
 
@@ -52,13 +54,23 @@ async function getAdminAccessToken() {
   const config = getBrowserSupabaseConfigStatus();
   if (!config.configured) throw new Error(config.message);
 
+  if (cachedAccessToken && cachedAccessToken.expiresAt > Date.now() + 30_000) {
+    return cachedAccessToken.token;
+  }
+
   const {
     data: { session },
   } = await getBrowserAdminSession();
 
   if (!session?.access_token) {
+    cachedAccessToken = null;
     throw new Error("Sessão administrativa expirada. Entre novamente.");
   }
+
+  cachedAccessToken = {
+    token: session.access_token,
+    expiresAt: session.expires_at ? session.expires_at * 1000 : Date.now() + 4 * 60_000,
+  };
   return session.access_token;
 }
 
@@ -75,43 +87,70 @@ export async function adminFetch<T>(
     if (entry && entry.expiresAt > Date.now()) {
       return entry.value as T;
     }
+    const existingRequest = adminInFlightRequests.get(cacheKey);
+    if (existingRequest) return existingRequest as Promise<T>;
   }
 
-  const token = await getAdminAccessToken();
+  const requestPromise = (async () => {
+    const token = await getAdminAccessToken();
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    if (!(init.body instanceof FormData) && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
 
-  const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${token}`);
-  if (!(init.body instanceof FormData) && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30_000);
+    const externalSignal = init.signal;
+    const abortFromExternal = () => controller.abort();
+    externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+
+    try {
+      const response = await fetch(path, {
+        ...init,
+        headers,
+        signal: controller.signal,
+        cache: "no-store",
+      });
+
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : await response.text();
+      if (!response.ok) {
+        const message =
+          typeof data === "object" && data && "error" in data
+            ? String(data.error)
+            : "Erro na operação administrativa.";
+        throw new Error(message);
+      }
+
+      if (cacheable) {
+        adminMemoryCache.set(cacheKey, {
+          value: data,
+          expiresAt: Date.now() + cacheTtlFor(path),
+        });
+      } else if (method !== "GET") {
+        clearAdminApiCache();
+      }
+      return data as T;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("A operação demorou demais. Verifique a conexão e tente novamente.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", abortFromExternal);
+    }
+  })();
+
+  if (cacheable) adminInFlightRequests.set(cacheKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    if (cacheable) adminInFlightRequests.delete(cacheKey);
   }
-
-  const response = await fetch(path, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-  if (!response.ok) {
-    const message =
-      typeof data === "object" && data && "error" in data
-        ? String(data.error)
-        : "Erro na operação administrativa.";
-    throw new Error(message);
-  }
-
-  if (cacheable) {
-    adminMemoryCache.set(cacheKey, {
-      value: data,
-      expiresAt: Date.now() + cacheTtlFor(path),
-    });
-  } else if (method !== "GET") {
-    clearAdminApiCache();
-  }
-  return data as T;
 }
 
 export async function downloadAdminFile(path: string, filename: string) {

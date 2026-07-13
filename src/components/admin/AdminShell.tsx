@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,6 @@ import {
   getBrowserAdminSession,
   getBrowserSupabaseConfigStatus,
 } from "@/lib/client/supabase";
-import { prefetchAdmin } from "@/lib/client/admin-api";
 import { clsx } from "clsx";
 
 const nav = [
@@ -248,26 +247,33 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   );
   const [profile, setProfile] = useState<Profile | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     let active = true;
+    const profileKey = "bs_admin_profile";
+    const cachedAtKey = "bs_admin_profile_cached_at";
+    const cacheTtlMs = 5 * 60_000;
 
-    const cachedProfile =
-      typeof window !== "undefined"
-        ? window.sessionStorage.getItem("bs_admin_profile")
-        : null;
+    const cachedProfile = typeof window !== "undefined"
+      ? window.sessionStorage.getItem(profileKey)
+      : null;
+    const cachedAt = typeof window !== "undefined"
+      ? Number(window.sessionStorage.getItem(cachedAtKey) || 0)
+      : 0;
+    let hasValidCachedProfile = false;
+
     if (cachedProfile) {
       try {
         setProfile(JSON.parse(cachedProfile));
         setAuthState("ready");
-        setAuthMessage(
-          "Sessão carregada do cache seguro. Atualizando em segundo plano...",
-        );
+        setAuthMessage("Sessão administrativa carregada.");
+        hasValidCachedProfile = true;
       } catch {
-        window.sessionStorage.removeItem("bs_admin_profile");
+        window.sessionStorage.removeItem(profileKey);
+        window.sessionStorage.removeItem(cachedAtKey);
       }
     }
+    const cacheIsFresh = Boolean(hasValidCachedProfile && cachedAt && Date.now() - cachedAt < cacheTtlMs);
 
     async function validateSession() {
       const config = getBrowserSupabaseConfigStatus();
@@ -283,43 +289,42 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         const { data } = await getBrowserAdminSession();
         if (!active) return;
         if (!data.session) {
-          window.sessionStorage.removeItem("bs_admin_profile");
-          setAuthMessage(
-            "Sessão administrativa não encontrada. Redirecionando para o login...",
-          );
+          window.sessionStorage.removeItem(profileKey);
+          window.sessionStorage.removeItem(cachedAtKey);
+          setAuthMessage("Sessão administrativa não encontrada. Redirecionando para o login...");
           setAuthState("redirecting");
           router.replace("/admin/login");
           return;
         }
+
+        if (cacheIsFresh) return;
+
         const response = await fetch("/api/admin/me", {
           headers: { Authorization: `Bearer ${data.session.access_token}` },
           cache: "no-store",
         });
-        if (response.ok) {
-          const payload = await response.json();
-          const adminProfile = payload.admin || null;
-          if (active) {
-            setProfile(adminProfile);
-            if (adminProfile)
-              window.sessionStorage.setItem(
-                "bs_admin_profile",
-                JSON.stringify(adminProfile),
-              );
-          }
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.error || "Não foi possível validar o perfil administrativo.");
         }
-        if (active) setAuthState("ready");
+
+        const payload = await response.json();
+        const adminProfile = payload.admin || null;
+        if (!active) return;
+        setProfile(adminProfile);
+        if (adminProfile) {
+          window.sessionStorage.setItem(profileKey, JSON.stringify(adminProfile));
+          window.sessionStorage.setItem(cachedAtKey, String(Date.now()));
+        }
+        setAuthState("ready");
       } catch (error) {
         if (!active) return;
         if (cachedProfile) {
           setAuthState("ready");
-          setAuthMessage("Usando sessão em cache enquanto a rede estabiliza.");
+          setAuthMessage("Usando a sessão em cache enquanto a conexão estabiliza.");
           return;
         }
-        setAuthMessage(
-          error instanceof Error
-            ? error.message
-            : "Não foi possível validar a sessão administrativa.",
-        );
+        setAuthMessage(error instanceof Error ? error.message : "Não foi possível validar a sessão administrativa.");
         setAuthState("redirecting");
         router.replace("/admin/login");
       }
@@ -332,14 +337,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     };
   }, [router]);
 
-  useEffect(() => {
-    // Pré-carrega dados comuns para evitar carregamentos repetidos ao trocar de função.
-    prefetchAdmin("/api/admin/options/branches");
-    prefetchAdmin("/api/admin/options/employees");
-    prefetchAdmin("/api/admin/dashboard/summary");
-  }, []);
-
   async function signOut() {
+    window.sessionStorage.removeItem("bs_admin_profile");
+    window.sessionStorage.removeItem("bs_admin_profile_cached_at");
     await createBrowserSupabaseClient().auth.signOut();
     router.replace("/admin/login");
   }
@@ -381,9 +381,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(7,141,58,0.10),transparent_340px),linear-gradient(180deg,#f7faf7,#f8fafc)]">
-      {isPending ? (
-        <div className="route-progress" aria-label="Carregando nova função" />
-      ) : null}
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r border-brand-100 bg-white/95 p-4 shadow-[18px_0_60px_rgba(15,23,42,0.04)] backdrop-blur lg:flex lg:flex-col">
         <BrandMark compact />
         <div className="mt-4 rounded-3xl border border-brand-100 bg-brand-50 p-3">
@@ -405,18 +402,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                onMouseEnter={() =>
-                  prefetchAdmin(
-                    item.href === "/admin"
-                      ? "/api/admin/dashboard/summary"
-                      : item.href.includes("funcionarios")
-                        ? "/api/admin/options/employees"
-                        : item.href.includes("folha")
-                          ? "/api/admin/payroll"
-                          : "/api/admin/options/branches",
-                  )
-                }
-                onClick={() => startTransition(() => undefined)}
+                prefetch={false}
                 className={clsx(
                   "flex min-w-0 items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-extrabold leading-tight transition-all",
                   active
@@ -470,18 +456,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                onMouseEnter={() =>
-                  prefetchAdmin(
-                    item.href === "/admin"
-                      ? "/api/admin/dashboard/summary"
-                      : item.href.includes("funcionarios")
-                        ? "/api/admin/options/employees"
-                        : item.href.includes("folha")
-                          ? "/api/admin/payroll"
-                          : "/api/admin/options/branches",
-                  )
-                }
-                onClick={() => startTransition(() => undefined)}
+                prefetch={false}
                 className={clsx(
                   "grid min-h-[56px] place-items-center rounded-2xl px-1 py-1 text-[10px] font-black leading-tight",
                   active
@@ -537,6 +512,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   <Link
                     key={item.href}
                     href={item.href}
+                    prefetch={false}
                     onClick={() => setMoreOpen(false)}
                     className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm font-black text-slate-800"
                   >
