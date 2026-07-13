@@ -764,6 +764,16 @@ export async function GET(request: NextRequest) {
     }
 
     const table = buildTable(type, data, settings.report_footer, meta, format);
+    if (type === "payroll" && data.some((item: any) => item.payroll_periods?.status === "incomplete_preview" || item.period_status_snapshot === "incomplete_preview")) {
+      table.meta = [
+        "PRÉVIA INCOMPLETA — NÃO USAR PARA PAGAMENTO SEM CONFERÊNCIA",
+        ...(table.meta || [])
+      ];
+      table.summary = [
+        ...(table.summary || []),
+        { label: "Status", value: "Prévia incompleta" }
+      ];
+    }
     if (format === "pdf" && data.length > Number(settings.payroll_pdf_block_rows || 1500)) {
       return fail("Este relatório tem muitos registros para PDF detalhado. Use Excel ou aplique filtros menores.", 413);
     }

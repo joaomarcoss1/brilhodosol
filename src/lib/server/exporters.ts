@@ -409,7 +409,9 @@ export async function createPdfBuffer(table: ExportTable) {
       doc.addPage();
       writePdfHeader(doc, table);
       y = isPayrollTable(table) ? 126 : 108;
+      return true;
     }
+    return false;
   }
 
   sections.forEach((section, sectionIndex) => {
@@ -460,7 +462,11 @@ export async function createPdfBuffer(table: ExportTable) {
     }
 
     section.rows.forEach((row, rowIndex) => {
-      ensurePage(rowHeight);
+      const newPage = ensurePage(rowHeight);
+      if (newPage) {
+        drawTableHeader(doc, section.headers, 36, y, usableWidth, rowHeight, fontSize, scaledWidths);
+        y += rowHeight;
+      }
       drawDataRow(
         doc,
         row,

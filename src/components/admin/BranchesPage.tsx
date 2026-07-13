@@ -25,6 +25,7 @@ const emptyForm = {
 
 export function BranchesPage() {
   const [branches, setBranches] = useState<any[]>([]);
+  const [readiness, setReadiness] = useState<any[]>([]);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [editing, setEditing] = useState<any | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -39,6 +40,7 @@ export function BranchesPage() {
       setLoading(true);
       const data = await adminFetch<any>(`/api/admin/branches${query ? `?q=${encodeURIComponent(query)}` : ""}`);
       setBranches(data.branches || []);
+      adminFetch<any>("/api/admin/branches/readiness").then((readinessData) => setReadiness(readinessData.readiness || [])).catch(() => setReadiness([]));
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar filiais.");
@@ -130,6 +132,45 @@ export function BranchesPage() {
       <SectionTitle title="Gestão de filiais" description="Configure matriz e filiais com Google Maps, raio de 900m, geofence e validação real para o ponto mobile." />
       {message ? <p className="mb-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{message}</p> : null}
       {error ? <p className="mb-3 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">{error}</p> : null}
+
+
+      <Card className="mb-4 border-brand-100 bg-gradient-to-br from-white to-brand-50/40">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-brand-700">Checklist operacional</p>
+            <h2 className="text-xl font-black text-slate-950">Loja pronta para ponto</h2>
+            <p className="text-sm font-semibold text-slate-600">Verifica GPS, geofence, funcionários, PIN, horário e remuneração antes de liberar o ponto nas unidades.</p>
+          </div>
+          <Button variant="secondary" onClick={load} loading={loading}><RefreshCw className="h-4 w-4" /> Atualizar checklist</Button>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-4">
+          {readiness.map((item) => {
+            const tone = item.readiness_status === "ready" ? "green" : item.readiness_status === "attention" ? "yellow" : "red";
+            return (
+              <article key={item.branch_id} className="rounded-[1.25rem] border border-slate-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.05)]">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-black text-slate-950">{item.branch_name}</h3>
+                    <p className="text-xs font-bold text-slate-500">{item.employee_count} funcionário(s) • {item.progress}% concluído</p>
+                  </div>
+                  <Badge tone={tone as any}>{item.readiness_status === "ready" ? "Pronta" : item.readiness_status === "attention" ? "Atenção" : "Bloqueada"}</Badge>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100"><span className={`block h-full ${item.readiness_status === "ready" ? "bg-emerald-500" : item.readiness_status === "attention" ? "bg-amber-400" : "bg-red-500"}`} style={{ width: `${item.progress || 0}%` }} /></div>
+                <div className="mt-3 grid gap-2">
+                  {(item.checklist_items || []).filter((check: any) => !check.passed).slice(0, 4).map((check: any) => (
+                    <div key={check.key} className="rounded-2xl bg-slate-50 p-2 text-xs font-bold text-slate-700">
+                      <span className="block text-slate-950">{check.label}</span>
+                      <span className="text-slate-500">{check.action}</span>
+                    </div>
+                  ))}
+                  {(item.checklist_items || []).every((check: any) => check.passed) ? <p className="rounded-2xl bg-emerald-50 p-2 text-xs font-black text-emerald-800">Unidade pronta para ponto com GPS.</p> : null}
+                </div>
+              </article>
+            );
+          })}
+          {!readiness.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">Checklist ainda não carregado.</p> : null}
+        </div>
+      </Card>
 
       <div className="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
         <div className="grid w-full min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] lg:max-w-xl">

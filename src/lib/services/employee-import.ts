@@ -361,7 +361,7 @@ export function buildImportReportTable(rows: ImportRow[], title = "Relatório de
 }
 
 export function buildEmployeesExportTable(rows: any[], canViewFinancial: boolean): ExportTable {
-  const incomplete = rows.filter((item) => !item.branch_id || !item.pin_hash || !item.role || !item.payment_day || !item.expected_start_time || !item.expected_end_time || !item.expected_lunch_start_time || !item.expected_lunch_end_time || (!Number(item.monthly_salary || 0) && !Number(item.daily_rate || 0))).length;
+  const incomplete = rows.filter((item) => !item.branch_id || item.has_pin === false || !item.role || !item.payment_day || !item.expected_start_time || !item.expected_end_time || !item.expected_lunch_start_time || !item.expected_lunch_end_time || (!Number(item.monthly_salary || 0) && !Number(item.daily_rate || 0))).length;
   const headers = ["Matrícula", "Funcionário", "Documento", "Telefone", "Filial", "Setor", "Cargo", "Contrato", "Dia pag.", "Entrada", "Almoço", "Retorno", "Saída", "Status", "Pendências"];
   if (canViewFinancial) headers.push("Salário", "Diária", "Pix", "Banco", "Agência", "Conta");
   return {
@@ -377,7 +377,7 @@ export function buildEmployeesExportTable(rows: any[], canViewFinancial: boolean
     rows: rows.map((item) => {
       const pendencies = [
         !item.branch_id && "Sem filial",
-        !item.pin_hash && "Sem PIN",
+        item.has_pin === false && "Sem PIN",
         !item.role && "Sem cargo",
         !item.payment_day && "Sem dia pagamento",
         !item.expected_start_time && "Sem entrada",

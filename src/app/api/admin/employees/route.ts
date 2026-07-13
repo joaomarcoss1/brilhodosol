@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/server/auth";
 import { normalizeMoney } from "@/lib/calculations";
 import { writeAuditLog } from "@/lib/server/audit";
-import { canAccessBranch, scopeByBranch, canViewFinancialData, maskSensitiveEmployeeFields } from "@/lib/server/branch-permissions";
+import { canAccessBranch, scopeByBranch, canViewFinancialData, maskSensitiveEmployeeFields, financialFieldsInPayload } from "@/lib/server/branch-permissions";
 import { fail, ok, readJson } from "@/lib/server/http";
 import { hashPin } from "@/lib/server/pin";
 
@@ -10,7 +10,7 @@ import { hashPin } from "@/lib/server/pin";
 function publicEmployee(employee: any) {
   if (!employee) return null;
   const { pin_hash: _pinHash, ...safe } = employee;
-  return safe;
+  return { ...safe, has_pin: Boolean(employee.pin_hash) };
 }
 
 function parseWorkDays(value: unknown) {
@@ -19,8 +19,8 @@ function parseWorkDays(value: unknown) {
   return [1, 2, 3, 4, 5, 6];
 }
 
-function employeePayload(body: any) {
-  return {
+function employeePayload(body: any, includeFinancial = true) {
+  const payload: Record<string, unknown> = {
     registration_code: body.registration_code ? String(body.registration_code).trim() : null,
     full_name: String(body.full_name || "").trim(),
     document: body.document ? String(body.document).trim() : null,
@@ -29,15 +29,6 @@ function employeePayload(body: any) {
     sector: body.sector ? String(body.sector).trim() : null,
     branch_id: body.branch_id,
     employment_type: body.employment_type || "mensalista",
-    monthly_salary: normalizeMoney(body.monthly_salary),
-    daily_rate: body.daily_rate === "" || body.daily_rate === null || body.daily_rate === undefined ? null : normalizeMoney(body.daily_rate),
-    daily_rate_mode: body.daily_rate_mode || "automatic",
-    pix_key: body.pix_key ? String(body.pix_key).trim() : null,
-    bank_name: body.bank_name ? String(body.bank_name).trim() : null,
-    bank_agency: body.bank_agency ? String(body.bank_agency).trim() : null,
-    bank_account: body.bank_account ? String(body.bank_account).trim() : null,
-    bank_account_type: body.bank_account_type ? String(body.bank_account_type).trim() : null,
-    payment_day: body.payment_day === "" || body.payment_day === null || body.payment_day === undefined ? null : Number(body.payment_day),
     active: body.active ?? true,
     admission_date: body.admission_date,
     expected_start_time: body.expected_start_time || "08:00",
@@ -49,6 +40,18 @@ function employeePayload(body: any) {
     work_days: parseWorkDays(body.work_days),
     allow_overtime: body.allow_overtime ?? true
   };
+  if (includeFinancial) {
+    payload.monthly_salary = normalizeMoney(body.monthly_salary);
+    payload.daily_rate = body.daily_rate === "" || body.daily_rate === null || body.daily_rate === undefined ? null : normalizeMoney(body.daily_rate);
+    payload.daily_rate_mode = body.daily_rate_mode || "automatic";
+    payload.pix_key = body.pix_key ? String(body.pix_key).trim() : null;
+    payload.bank_name = body.bank_name ? String(body.bank_name).trim() : null;
+    payload.bank_agency = body.bank_agency ? String(body.bank_agency).trim() : null;
+    payload.bank_account = body.bank_account ? String(body.bank_account).trim() : null;
+    payload.bank_account_type = body.bank_account_type ? String(body.bank_account_type).trim() : null;
+    payload.payment_day = body.payment_day === "" || body.payment_day === null || body.payment_day === undefined ? null : Number(body.payment_day);
+  }
+  return payload;
 }
 
 export async function GET(request: NextRequest) {
@@ -82,11 +85,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await readJson<any>(request);
     if (!body.pin || !/^\d{4}$/.test(String(body.pin))) return fail("PIN inicial obrigatório e deve conter exatamente 4 dígitos.", 400);
-    const payload = {
-      ...employeePayload(body),
+    const canFinancial = canViewFinancialData(auth.context);
+    const financialKeys = financialFieldsInPayload(body);
+    if (!canFinancial && financialKeys.length) return fail("Você não tem permissão para alterar dados financeiros.", 403);
+    const payload: Record<string, unknown> = {
+      ...employeePayload(body, canFinancial),
       pin_hash: await hashPin(String(body.pin))
     };
-    if (!canAccessBranch(auth.context, payload.branch_id)) return fail("Você não tem acesso a esta filial.", 403);
+    if (!canAccessBranch(auth.context, String(payload.branch_id || ""))) return fail("Você não tem acesso a esta filial.", 403);
     if (!payload.full_name || !payload.role || !payload.branch_id || !payload.admission_date) {
       return fail("Preencha nome, cargo, filial e admissão.", 400);
     }
@@ -94,16 +100,18 @@ export async function POST(request: NextRequest) {
     const { data, error } = await auth.supabase.from("employees").insert(payload).select("*, branches:branches!employees_branch_id_fkey(name)").single();
     if (error) return fail("Erro ao criar funcionário.", 500, error.message);
 
-    await auth.supabase.from("employee_salary_history").insert({
-      employee_id: data.id,
-      monthly_salary: data.monthly_salary,
-      daily_rate: data.daily_rate,
-      daily_rate_mode: data.daily_rate_mode,
-      effective_from: data.admission_date,
-      valid_from: data.admission_date,
-      reason: "Cadastro inicial",
-      changed_by: auth.context.userId
-    });
+    if (canFinancial) {
+      await auth.supabase.from("employee_salary_history").insert({
+        employee_id: data.id,
+        monthly_salary: data.monthly_salary,
+        daily_rate: data.daily_rate,
+        daily_rate_mode: data.daily_rate_mode,
+        effective_from: data.admission_date,
+        valid_from: data.admission_date,
+        reason: "Cadastro inicial",
+        changed_by: auth.context.userId
+      });
+    }
 
     await auth.supabase.from("work_schedules").insert({
       employee_id: data.id,
@@ -135,7 +143,10 @@ export async function PUT(request: NextRequest) {
     const { data: oldData, error: oldError } = await auth.supabase.from("employees").select("*").eq("id", body.id).maybeSingle();
     if (oldError || !oldData) return fail("Funcionário não encontrado.", 404, oldError?.message);
 
-    const payload: Record<string, unknown> = employeePayload(body);
+    const canFinancial = canViewFinancialData(auth.context);
+    const financialKeys = financialFieldsInPayload(body);
+    if (!canFinancial && financialKeys.length) return fail("Você não tem permissão para alterar dados financeiros.", 403);
+    const payload: Record<string, unknown> = employeePayload(body, canFinancial);
     if (!canAccessBranch(auth.context, oldData.branch_id)) return fail("Você não tem acesso a este funcionário.", 403);
     if (!canAccessBranch(auth.context, String(payload.branch_id || oldData.branch_id))) return fail("Você não tem acesso à filial selecionada.", 403);
     if (body.pin) payload.pin_hash = await hashPin(String(body.pin));
@@ -143,11 +154,11 @@ export async function PUT(request: NextRequest) {
     const { data, error } = await auth.supabase.from("employees").update(payload).eq("id", body.id).select("*, branches:branches!employees_branch_id_fkey(name)").single();
     if (error) return fail("Erro ao atualizar funcionário.", 500, error.message);
 
-    if (
+    if (canFinancial && (
       Number(oldData.monthly_salary) !== Number(data.monthly_salary) ||
       Number(oldData.daily_rate || 0) !== Number(data.daily_rate || 0) ||
       oldData.daily_rate_mode !== data.daily_rate_mode
-    ) {
+    )) {
       const validFrom = body.salary_valid_from || new Date().toISOString().slice(0, 10);
       const previousUntil = new Date(`${validFrom}T12:00:00Z`);
       previousUntil.setUTCDate(previousUntil.getUTCDate() - 1);

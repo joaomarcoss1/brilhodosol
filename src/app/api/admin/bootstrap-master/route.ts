@@ -10,10 +10,28 @@ export async function POST(request: NextRequest) {
     const setupToken = process.env.MASTER_SETUP_TOKEN;
     const masterEmail = process.env.MASTER_ADMIN_EMAIL;
     const masterName = process.env.MASTER_ADMIN_NAME || "Joao Marcos";
-    if (!setupToken || !masterEmail) return fail("Configure MASTER_ADMIN_EMAIL e MASTER_SETUP_TOKEN no ambiente.", 500);
+    if (!setupToken || !masterEmail) return fail("Bootstrap master desativado. Configure MASTER_ADMIN_EMAIL e MASTER_SETUP_TOKEN apenas na configuração inicial.", 403);
     if (body.setupToken !== setupToken) return fail("Token de configuração inválido.", 403);
 
     const supabase = getSupabaseAdmin();
+
+    const { data: existingMasters, error: masterCheckError } = await supabase
+      .from("admin_users")
+      .select("id,email")
+      .eq("role", "master_admin")
+      .eq("active", true)
+      .limit(2);
+    if (masterCheckError) return fail("Não foi possível validar administradores master existentes.", 500, masterCheckError.message);
+    if (process.env.NODE_ENV === "production" && (existingMasters || []).length > 0) {
+      await writeAuditLog({
+        supabase,
+        action: "blocked_bootstrap_master_production",
+        entity: "admin_users",
+        newData: { reason: "active_master_exists", requestedEmail: body.email || masterEmail }
+      });
+      return fail("Bootstrap master desativado em produção.", 403);
+    }
+
     const authHeader = request.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
 

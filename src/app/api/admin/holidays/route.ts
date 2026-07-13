@@ -1,15 +1,16 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/server/auth";
 import { writeAuditLog } from "@/lib/server/audit";
+import { assertHolidayInScope, canAccessBranch, canAccessAllBranches, scopeHolidayQuery } from "@/lib/server/branch-permissions";
 import { fail, ok, readJson } from "@/lib/server/http";
-
 
 export async function GET(request: NextRequest) {
   const auth = await requireAdmin(request);
   if ("error" in auth) return auth.error;
   const branchId = request.nextUrl.searchParams.get("branchId");
+  if (branchId && !canAccessBranch(auth.context, branchId)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
   let query = auth.supabase.from("holidays").select("*, branches:branches!holidays_branch_id_fkey(name)").order("holiday_date", { ascending: false }).limit(300);
-  if (branchId) query = query.or(`branch_id.is.null,branch_id.eq.${branchId}`);
+  query = scopeHolidayQuery(query, auth.context, branchId);
   const { data, error } = await query;
   if (error) return fail("Erro ao listar feriados e folgas.", 500, error.message);
   return ok({ holidays: data || [] });
@@ -19,8 +20,11 @@ export async function POST(request: NextRequest) {
   const auth = await requireAdmin(request);
   if ("error" in auth) return auth.error;
   const body = await readJson<any>(request);
+  const branchId = body.branch_id || null;
+  if (branchId && !canAccessBranch(auth.context, branchId)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
+  if (!branchId && !canAccessAllBranches(auth.context)) return fail("Feriados globais são restritos à administração geral.", 403);
   const payload = {
-    branch_id: body.branch_id || null,
+    branch_id: branchId,
     holiday_date: body.holiday_date,
     title: String(body.title || "").trim(),
     type: body.type || "holiday",
@@ -39,9 +43,14 @@ export async function PUT(request: NextRequest) {
   if ("error" in auth) return auth.error;
   const body = await readJson<any>(request);
   if (!body.id) return fail("ID obrigatório.", 400);
+  const scopeError = await assertHolidayInScope({ supabase: auth.supabase, context: auth.context, holidayId: body.id });
+  if (scopeError) return scopeError;
+  const branchId = body.branch_id || null;
+  if (branchId && !canAccessBranch(auth.context, branchId)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
+  if (!branchId && !canAccessAllBranches(auth.context)) return fail("Feriados globais são restritos à administração geral.", 403);
   const { data: oldData } = await auth.supabase.from("holidays").select("*").eq("id", body.id).maybeSingle();
   const payload = {
-    branch_id: body.branch_id || null,
+    branch_id: branchId,
     holiday_date: body.holiday_date,
     title: String(body.title || "").trim(),
     type: body.type || "holiday",
@@ -58,6 +67,8 @@ export async function DELETE(request: NextRequest) {
   if ("error" in auth) return auth.error;
   const id = request.nextUrl.searchParams.get("id");
   if (!id) return fail("ID obrigatório.", 400);
+  const scopeError = await assertHolidayInScope({ supabase: auth.supabase, context: auth.context, holidayId: id });
+  if (scopeError) return scopeError;
   const { data: oldData } = await auth.supabase.from("holidays").select("*").eq("id", id).maybeSingle();
   const { data, error } = await auth.supabase.from("holidays").update({ active: false }).eq("id", id).select("*").single();
   if (error) return fail("Erro ao desativar feriado/folga.", 500, error.message);

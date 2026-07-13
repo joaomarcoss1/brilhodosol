@@ -19,6 +19,30 @@ import type { TimeAction } from "@/types/domain";
 
 const actions = ["start_shift", "start_lunch", "end_lunch", "end_shift"];
 
+const clockRateLimiter = new Map<string, { count: number; resetAt: number }>();
+const CLOCK_RATE_LIMIT_WINDOW_MS = 2 * 60 * 1000;
+const CLOCK_RATE_LIMIT_MAX = 5;
+
+function clientIp(request: NextRequest) {
+  return (request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown").split(",")[0].trim();
+}
+
+function checkClockRateLimit(request: NextRequest, employeeId: string) {
+  const now = Date.now();
+  const key = `${employeeId}:${clientIp(request)}`;
+  const current = clockRateLimiter.get(key);
+  if (!current || current.resetAt <= now) {
+    clockRateLimiter.set(key, { count: 1, resetAt: now + CLOCK_RATE_LIMIT_WINDOW_MS });
+    return null;
+  }
+  if (current.count >= CLOCK_RATE_LIMIT_MAX) {
+    return fail("Muitas tentativas de registro. Aguarde alguns minutos e tente novamente.", 429);
+  }
+  current.count += 1;
+  clockRateLimiter.set(key, current);
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await readJson<{
@@ -38,6 +62,8 @@ export async function POST(request: NextRequest) {
     const action = body.action;
     const pin = assertPin(body.pin);
     if (!employeeId) return fail("Selecione um funcionário.", 400);
+    const rateLimitError = checkClockRateLimit(request, employeeId);
+    if (rateLimitError) return rateLimitError;
     if (!action || !actions.includes(action)) return fail("Ação de ponto inválida.", 400);
     if (!Number.isFinite(body.latitude) || !Number.isFinite(body.longitude)) {
       return fail("Não foi possível capturar sua localização. Ative o GPS e tente novamente.", 400);

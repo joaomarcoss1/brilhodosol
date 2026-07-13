@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { calculatePayrollItemWithEngines } from "@/lib/services/payroll-engine";
 import { fetchScheduleContext } from "@/lib/services/schedule-engine";
@@ -8,6 +9,37 @@ import { canAccessAllBranches, canAccessBranch, canViewFinancialData, scopeByBra
 import { getSystemSettings } from "@/lib/server/settings";
 import { buildPayrollClosureChecklist } from "@/lib/services/payroll-checklist";
 
+function buildPayrollIdempotencyKey(contextUserId: string, body: any) {
+  const normalized = {
+    created_by: contextUserId,
+    branch_id: body.branch_id || "all",
+    start_date: body.start_date,
+    end_date: body.end_date,
+    payment_day: body.payment_day ? Number(body.payment_day) : "all",
+    employment_type: body.employment_type || "all",
+    employee_id: body.employee_id || "all",
+    role: String(body.role || "").trim().toLowerCase() || "all"
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+}
+
+function countIncompleteEntryDays(entries: any[]) {
+  const groups = new Map<string, any[]>();
+  entries.forEach((entry) => {
+    const key = `${entry.employee_id}:${entry.entry_date}`;
+    groups.set(key, [...(groups.get(key) || []), entry]);
+  });
+  let missingEndShift = 0;
+  let missingLunchReturn = 0;
+  let missingFinalAfterLunch = 0;
+  groups.forEach((rows) => {
+    const validRows = rows.filter((entry) => ["valid", "pending_review", "adjusted"].includes(entry.status));
+    if (validRows.some((entry) => entry.action === "start_shift") && !validRows.some((entry) => entry.action === "end_shift")) missingEndShift += 1;
+    if (validRows.some((entry) => entry.action === "start_lunch") && !validRows.some((entry) => entry.action === "end_lunch")) missingLunchReturn += 1;
+    if (validRows.some((entry) => entry.action === "end_lunch") && !validRows.some((entry) => entry.action === "end_shift")) missingFinalAfterLunch += 1;
+  });
+  return { missingEndShift, missingLunchReturn, missingFinalAfterLunch };
+}
 
 function resolveSalarySnapshot(employee: any, history: any[], startDate: string, endDate: string) {
   const candidates = history
@@ -99,6 +131,29 @@ export async function POST(request: NextRequest) {
     if (body.branch_id && !canAccessBranch(auth.context, body.branch_id)) return fail("Você não tem acesso a esta filial.", 403);
     if (!body.branch_id && !canAccessAllBranches(auth.context)) return fail("Selecione uma filial permitida para gerar a folha.", 403);
 
+    const idempotencyKey = buildPayrollIdempotencyKey(auth.context.userId, body);
+    const { data: existingPeriod, error: existingPeriodError } = await auth.supabase
+      .from("payroll_periods")
+      .select("*")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (existingPeriodError && !String(existingPeriodError.message || "").toLowerCase().includes("idempotency_key")) {
+      return fail("Erro ao verificar duplicidade da folha.", 500, existingPeriodError.message);
+    }
+    if (existingPeriod) {
+      const { count } = await auth.supabase
+        .from("payroll_items")
+        .select("id", { count: "exact", head: true })
+        .eq("payroll_period_id", existingPeriod.id);
+      return ok({
+        period: existingPeriod,
+        itemsCreated: count || 0,
+        generatedStatus: existingPeriod.status,
+        duplicated: true,
+        message: "Já existe uma folha para este período e filtro. Abrimos a folha existente para evitar duplicidade."
+      });
+    }
+
     const { data: period, error: periodError } = await auth.supabase
       .from("payroll_periods")
       .insert({
@@ -110,7 +165,8 @@ export async function POST(request: NextRequest) {
         status: "draft",
         payment_day: body.payment_day ? Number(body.payment_day) : null,
         created_by: auth.context.userId,
-        notes: body.notes || null
+        notes: body.notes || null,
+        idempotency_key: idempotencyKey
       })
       .select("*")
       .single();
@@ -214,15 +270,53 @@ export async function POST(request: NextRequest) {
       if (itemsError) throw new Error(itemsError.message);
     }
 
+    const selectedEmployeeIds = new Set(employeeIds);
+    const scopedEntries = (entries || []).filter((entry: any) => selectedEmployeeIds.has(entry.employee_id));
+    const scopedJustifications = (justifications || []).filter((justification: any) => selectedEmployeeIds.has(justification.employee_id));
+    const scopedOvertime = (overtimeReviews || []).filter((review: any) => selectedEmployeeIds.has(review.employee_id));
+    const incompleteEntryDays = countIncompleteEntryDays(scopedEntries);
+    const incompleteReasons = [
+      { key: "employees_without_points", label: "Funcionários sem nenhum ponto no período", count: items.filter((item: any) => Number(item.expected_work_days || 0) > 0 && Number(item.worked_days || 0) === 0).length },
+      { key: "discounted_absences", label: "Faltas sem abono/justificativa refletidas na folha", count: items.filter((item: any) => Number(item.discounted_absences || 0) > 0 || Number(item.identified_absences || 0) > 0).length },
+      { key: "negative_amount", label: "Itens com líquido negativo", count: items.filter((item: any) => Number(item.final_amount || 0) < 0).length },
+      { key: "missing_salary", label: "Funcionários sem salário ou diária", count: items.filter((item: any) => !Number(item.base_salary || item.daily_rate || 0)).length },
+      { key: "missing_end_shift", label: "Expedientes sem saída final", count: incompleteEntryDays.missingEndShift },
+      { key: "missing_lunch_return", label: "Saídas de almoço sem retorno", count: incompleteEntryDays.missingLunchReturn },
+      { key: "missing_final_after_lunch", label: "Retornos de almoço sem saída final", count: incompleteEntryDays.missingFinalAfterLunch },
+      { key: "pending_point_reviews", label: "Pontos/ocorrências pendentes de revisão", count: scopedEntries.filter((entry: any) => entry.status === "pending_review" || entry.occurrence_review_status === "pending_review").length },
+      { key: "outside_radius_pending", label: "Pontos fora do raio pendentes", count: scopedEntries.filter((entry: any) => entry.status === "pending_review" && entry.inside_allowed_radius === false).length },
+      { key: "poor_gps_accuracy", label: "Pontos com GPS impreciso pendentes", count: scopedEntries.filter((entry: any) => entry.status === "pending_review" && Number(entry.gps_accuracy_meters || 0) > 0).length },
+      { key: "pending_justifications", label: "Justificativas pendentes", count: scopedJustifications.filter((item: any) => item.status === "pending").length },
+      { key: "pending_overtime", label: "Horas extras pendentes", count: scopedOvertime.filter((item: any) => item.status === "pending").length },
+      { key: "missing_items", label: "Folha sem itens", count: items.length === 0 ? 1 : 0 }
+    ].filter((item) => item.count > 0);
+    const generatedStatus = incompleteReasons.length > 0 ? "incomplete_preview" : "draft";
+    const { data: updatedPeriod, error: statusError } = await auth.supabase
+      .from("payroll_periods")
+      .update({
+        status: generatedStatus,
+        closure_snapshot: generatedStatus === "incomplete_preview" ? {
+          warning: "PREVIA_INCOMPLETA",
+          message: "Esta folha ainda possui pendências e não deve ser usada para pagamento sem conferência.",
+          reasons: incompleteReasons,
+          affected_items: incompleteReasons.reduce((sum, item) => sum + Number(item.count || 0), 0),
+          generated_at: new Date().toISOString()
+        } : null
+      })
+      .eq("id", period.id)
+      .select("*")
+      .single();
+    if (statusError) throw new Error(statusError.message);
+
     await writeAuditLog({
       supabase: auth.supabase,
       context: auth.context,
       action: "generate",
       entity: "payroll_periods",
       entityId: period.id,
-      newData: { period, items: items.length }
+      newData: { period: updatedPeriod || period, items: items.length, generatedStatus }
     });
-    return ok({ period, itemsCreated: items.length });
+    return ok({ period: updatedPeriod || period, itemsCreated: items.length, generatedStatus });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Erro ao gerar folha.", 500);
   }

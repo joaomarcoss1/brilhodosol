@@ -8,6 +8,10 @@ const BRANCH_MANAGEMENT_ROLES = new Set(["master_admin", "admin", "admin_geral"]
 const PAYROLL_ROLES = new Set(["master_admin", "rh_financeiro"]);
 
 export function canAccessAllBranches(context: AdminContext) {
+  // Master precisa enxergar todas as unidades mesmo que o perfil antigo tenha branch_id preenchido.
+  // Antes, um master_admin vinculado acidentalmente a uma filial ficava limitado e o seletor da folha
+  // carregava apenas "Todas permitidas" sem listar Matriz/Vila Biné/Construção/1° de Maio.
+  if (context.role === "master_admin") return true;
   return ALL_BRANCH_ROLES.has(context.role) && (!context.allowedBranchIds || context.allowedBranchIds.length === 0) && !context.branchId;
 }
 
@@ -25,6 +29,30 @@ export function canManageBranches(context: AdminContext) {
 
 export function canManageAdmins(context: AdminContext) {
   return context.role === "master_admin";
+}
+
+export function isMasterAdmin(context: AdminContext) {
+  return context.role === "master_admin";
+}
+
+export function isFinancialField(field: string) {
+  return new Set([
+    "monthly_salary",
+    "daily_rate",
+    "daily_rate_mode",
+    "salary_type",
+    "pix_key",
+    "bank_name",
+    "bank_agency",
+    "bank_account",
+    "bank_account_type",
+    "payment_day",
+    "financial_notes"
+  ]).has(field);
+}
+
+export function financialFieldsInPayload(payload: Record<string, unknown>) {
+  return Object.keys(payload || {}).filter((key) => isFinancialField(key));
 }
 
 export function allowedBranchIds(context: AdminContext) {
@@ -51,6 +79,13 @@ export function assertCanAccessBranch(context: AdminContext, branchId?: string |
 export function assertCanViewFinancial(context: AdminContext) {
   if (!canViewFinancialData(context)) {
     return fail("Você não tem permissão para acessar dados financeiros.", 403);
+  }
+  return null;
+}
+
+export function assertCanEditFinancial(context: AdminContext) {
+  if (!canViewFinancialData(context)) {
+    return fail("Você não tem permissão para alterar dados financeiros.", 403);
   }
   return null;
 }
@@ -123,4 +158,47 @@ export function maskSensitiveEmployeeFields<T extends Record<string, any>>(emplo
 
 export function maskSensitiveRows<T extends Record<string, any>>(rows: T[], context: AdminContext) {
   return rows.map((row) => maskSensitiveEmployeeFields(row, context));
+}
+
+export async function assertTimeEntryInScope(params: { supabase: SupabaseClient; context: AdminContext; entryId: string }) {
+  const { data, error } = await params.supabase.from("time_entries").select("id, branch_id, employee_id").eq("id", params.entryId).maybeSingle();
+  if (error) return fail("Erro ao validar ponto.", 500, error.message);
+  if (!data) return fail("Registro não encontrado ou fora do seu escopo de acesso.", 404);
+  if (!canAccessBranch(params.context, data.branch_id)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
+  return null;
+}
+
+export async function assertAuthorizationInScope(params: { supabase: SupabaseClient; context: AdminContext; authorizationId: string }) {
+  const { data, error } = await params.supabase
+    .from("employee_branch_authorizations")
+    .select("id, branch_id, employee_id")
+    .eq("id", params.authorizationId)
+    .maybeSingle();
+  if (error) return fail("Erro ao validar autorização.", 500, error.message);
+  if (!data) return fail("Registro não encontrado ou fora do seu escopo de acesso.", 404);
+  if (!canAccessBranch(params.context, data.branch_id)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
+  return null;
+}
+
+export async function assertHolidayInScope(params: { supabase: SupabaseClient; context: AdminContext; holidayId: string }) {
+  const { data, error } = await params.supabase.from("holidays").select("id, branch_id").eq("id", params.holidayId).maybeSingle();
+  if (error) return fail("Erro ao validar feriado/folga.", 500, error.message);
+  if (!data) return fail("Registro não encontrado ou fora do seu escopo de acesso.", 404);
+  if (data.branch_id && !canAccessBranch(params.context, data.branch_id)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
+  if (!data.branch_id && !canAccessAllBranches(params.context)) return fail("Feriados globais são restritos à administração geral.", 403);
+  return null;
+}
+
+export function scopeHolidayQuery(query: any, context: AdminContext, requestedBranchId?: string | null) {
+  if (canAccessAllBranches(context)) {
+    if (requestedBranchId) return query.or(`branch_id.is.null,branch_id.eq.${requestedBranchId}`);
+    return query;
+  }
+  const ids = allowedBranchIds(context);
+  if (!ids?.length) return query.eq("branch_id", "00000000-0000-0000-0000-000000000000");
+  if (requestedBranchId) {
+    if (!ids.includes(requestedBranchId)) return query.eq("branch_id", "00000000-0000-0000-0000-000000000000");
+    return query.or(`branch_id.is.null,branch_id.eq.${requestedBranchId}`);
+  }
+  return query.or(`branch_id.is.null,branch_id.in.(${ids.join(",")})`);
 }

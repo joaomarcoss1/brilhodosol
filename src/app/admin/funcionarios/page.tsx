@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Download, FileSpreadsheet, FileUp, UsersRound } from "lucide-react";
+import { Download, FileUp } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
 import {
   ResourceManager,
@@ -10,10 +11,24 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
-import { downloadAdminFile } from "@/lib/client/admin-api";
+import { adminFetch, downloadAdminFile } from "@/lib/client/admin-api";
 import { formatMoney } from "@/lib/format";
 
-const fields = [
+const financialFieldNames = new Set([
+  "monthly_salary",
+  "daily_rate",
+  "salary_valid_from",
+  "salary_change_reason",
+  "daily_rate_mode",
+  "pix_key",
+  "bank_name",
+  "bank_agency",
+  "bank_account",
+  "bank_account_type",
+  "payment_day",
+]);
+
+const baseFields = [
   { name: "registration_code", label: "Matrícula/código interno" },
   { name: "full_name", label: "Nome completo", required: true },
   { name: "document", label: "CPF/documento" },
@@ -95,82 +110,91 @@ const fields = [
   { name: "active", label: "Funcionário ativo", type: "checkbox" as const },
 ];
 
-const columns = [
-  {
-    key: "registration_code",
-    label: "Matrícula",
-    render: (item: any) => item.registration_code || "-",
-  },
-  { key: "full_name", label: "Funcionário" },
-  { key: "sector", label: "Setor", render: (item: any) => item.sector || "-" },
-  { key: "role", label: "Cargo" },
-  {
-    key: "branches",
-    label: "Filial",
-    render: (item: any) => item.branches?.name || "-",
-  },
-  { key: "employment_type", label: "Contrato" },
-  { key: "payment_day", label: "Pagamento", render: (item: any) => item.payment_day ? `Dia ${item.payment_day}` : "Não definido" },
-  {
-    key: "monthly_salary",
-    label: "Salário",
-    render: (item: any) => formatMoney(item.monthly_salary),
-  },
-  {
-    key: "alerts",
-    label: "Alertas",
-    render: (item: any) => {
-      const alerts = [
-        !item.branch_id && "Sem filial",
-        !Number(item.monthly_salary || item.daily_rate || 0) && "Sem salário",
-        !item.pin_hash && "Sem PIN",
-        !item.payment_day && "Sem dia pag.",
-        !item.expected_start_time && "Sem entrada",
-        !item.expected_end_time && "Sem saída",
-        !item.expected_lunch_start_time && "Sem almoço",
-        !item.expected_lunch_end_time && "Sem retorno",
-        !item.work_days?.length && "Sem escala",
-      ].filter(Boolean);
-      return alerts.length ? (
-        <div className="flex flex-wrap gap-1">
-          {alerts.map((alert) => (
-            <Badge key={String(alert)} tone="yellow">
-              {alert}
-            </Badge>
-          ))}
-        </div>
-      ) : (
-        <Badge tone="green">Completo</Badge>
-      );
+function buildColumns(canFinancial: boolean) {
+  const columns = [
+    {
+      key: "registration_code",
+      label: "Matrícula",
+      render: (item: any) => item.registration_code || "-",
     },
-  },
-  {
-    key: "employee_salary_history",
-    label: "Hist. salarial",
-    render: (item: any) => {
-      const history = item.employee_salary_history || [];
-      return history.length ? `${history.length} registro(s)` : "Sem histórico";
+    { key: "full_name", label: "Funcionário" },
+    { key: "sector", label: "Setor", render: (item: any) => item.sector || "-" },
+    { key: "role", label: "Cargo" },
+    {
+      key: "branches",
+      label: "Filial",
+      render: (item: any) => item.branches?.name || "-",
     },
-  },
-  { key: "expected_start_time", label: "Entrada" },
-  { key: "expected_lunch_start_time", label: "Almoço", render: (item: any) => item.expected_lunch_start_time || "-" },
-  { key: "expected_lunch_end_time", label: "Retorno", render: (item: any) => item.expected_lunch_end_time || "-" },
-  { key: "expected_end_time", label: "Saída" },
-  {
-    key: "active",
-    label: "Status",
-    render: (item: any) => activeBadge(item.active),
-  },
-];
+    { key: "employment_type", label: "Contrato" },
+    { key: "payment_day", label: "Pagamento", render: (item: any) => item.payment_day ? `Dia ${item.payment_day}` : canFinancial ? "Não definido" : "Restrito" },
+    {
+      key: "monthly_salary",
+      label: "Salário",
+      render: (item: any) => formatMoney(item.monthly_salary),
+    },
+    {
+      key: "alerts",
+      label: "Alertas",
+      render: (item: any) => {
+        const salaryHidden = item.monthly_salary === null && item.daily_rate === null;
+        const alerts = [
+          !item.branch_id && "Sem filial",
+          canFinancial && !salaryHidden && !Number(item.monthly_salary || item.daily_rate || 0) && "Sem salário",
+          item.has_pin === false && "Sem PIN",
+          canFinancial && !item.payment_day && "Sem dia pag.",
+          !item.expected_start_time && "Sem entrada",
+          !item.expected_end_time && "Sem saída",
+          !item.expected_lunch_start_time && "Sem almoço",
+          !item.expected_lunch_end_time && "Sem retorno",
+          !item.work_days?.length && "Sem escala",
+        ].filter(Boolean);
+        return alerts.length ? (
+          <div className="flex flex-wrap gap-1">
+            {alerts.map((alert) => (
+              <Badge key={String(alert)} tone="yellow">
+                {alert}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <Badge tone="green">Completo</Badge>
+        );
+      },
+    },
+    {
+      key: "employee_salary_history",
+      label: "Hist. salarial",
+      render: (item: any) => {
+        const history = item.employee_salary_history || [];
+        return history.length ? `${history.length} registro(s)` : "Sem histórico";
+      },
+    },
+    { key: "expected_start_time", label: "Entrada" },
+    { key: "expected_lunch_start_time", label: "Almoço", render: (item: any) => item.expected_lunch_start_time || "-" },
+    { key: "expected_lunch_end_time", label: "Retorno", render: (item: any) => item.expected_lunch_end_time || "-" },
+    { key: "expected_end_time", label: "Saída" },
+    {
+      key: "active",
+      label: "Status",
+      render: (item: any) => activeBadge(item.active),
+    },
+  ];
+  if (canFinancial) return columns;
+  return columns.filter((column) => !["monthly_salary", "employee_salary_history"].includes(column.key));
+}
 
 export default function Page() {
-  async function exportEmployees(format: "pdf" | "xlsx") {
-    const ext = format === "pdf" ? "pdf" : "xlsx";
-    await downloadAdminFile(
-      `/api/admin/employees/export?format=${format}`,
-      `funcionarios-brilho-do-sol.${ext}`,
-    );
-  }
+  const [canFinancial, setCanFinancial] = useState(false);
+
+  useEffect(() => {
+    adminFetch<any>("/api/admin/me")
+      .then((data) => setCanFinancial(Boolean(data.admin?.can_edit_financial || data.admin?.canViewFinancialData)))
+      .catch(() => setCanFinancial(false));
+  }, []);
+
+  const fields = useMemo(() => canFinancial ? baseFields : baseFields.filter((field) => !financialFieldNames.has(field.name)), [canFinancial]);
+  const columns = useMemo(() => buildColumns(canFinancial), [canFinancial]);
+  const omitFieldNamesOnSave = useMemo(() => canFinancial ? [] : [...financialFieldNames], [canFinancial]);
 
   return (
     <AdminShell>
@@ -185,11 +209,10 @@ export default function Page() {
               Funcionários
             </p>
             <h2 className="mt-1 text-2xl font-black">
-              Importação, exportação e cadastro completo
+              Importação, exportação filtrada e cadastro completo
             </h2>
             <p className="mt-1 max-w-3xl text-sm font-semibold text-emerald-50">
-              Cadastre equipes por Excel/CSV/PDF assistido, gere PIN automático,
-              exporte cadastro e acompanhe pendências cadastrais.
+              Use os botões de exportação filtrada dentro da tabela para respeitar filial, busca, status, contrato e dia de pagamento.
             </p>
           </div>
           <div className="admin-action-row mobile-stack-actions">
@@ -211,32 +234,24 @@ export default function Page() {
             >
               <Download className="h-4 w-4" /> Modelo
             </Button>
-            <Button
-              variant="ghost"
-              onClick={() => exportEmployees("pdf")}
-              className="border-white/20 bg-white/10 text-white hover:bg-white hover:text-brand-800"
-            >
-              <UsersRound className="h-4 w-4" /> PDF
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => exportEmployees("xlsx")}
-              className="border-white/20 bg-white/10 text-white hover:bg-white hover:text-brand-800"
-            >
-              <FileSpreadsheet className="h-4 w-4" /> Excel
-            </Button>
           </div>
         </div>
       </Card>
+      {!canFinancial ? (
+        <Card className="mb-4 border-amber-200 bg-amber-50 text-amber-950">
+          <p className="text-sm font-bold">Seu perfil não possui permissão financeira. Salário, diária, Pix, banco e dia de pagamento ficam ocultos e bloqueados no backend.</p>
+        </Card>
+      ) : null}
       <ResourceManager
         title="Cadastro individual"
-        description="Edite dados pessoais, filial, setor, cargo, escala, salário, pagamento e PIN de 4 dígitos."
+        description="Edite dados pessoais, filial, setor, cargo, escala, salário, pagamento e PIN de 4 dígitos. Exportações nesta área respeitam os filtros ativos."
         endpoint="/api/admin/employees"
         collectionKey="employees"
         fields={fields}
         columns={columns}
         exportEndpoint="/api/admin/employees/export"
         exportFileBase="funcionarios-brilho-do-sol"
+        omitFieldNamesOnSave={omitFieldNamesOnSave}
         filters={[
           {
             key: "branch_id",

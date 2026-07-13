@@ -58,7 +58,8 @@ export function ResourceManager({
   disableShell = false,
   filters = [],
   exportEndpoint,
-  exportFileBase
+  exportFileBase,
+  omitFieldNamesOnSave = []
 }: {
   title: string;
   description?: string;
@@ -71,6 +72,7 @@ export function ResourceManager({
   filters?: ResourceFilter[];
   exportEndpoint?: string;
   exportFileBase?: string;
+  omitFieldNamesOnSave?: string[];
 }) {
   const [items, setItems] = useState<any[]>([]);
   const [options, setOptions] = useState<Record<string, Array<{ label: string; value: string }>>>({});
@@ -189,7 +191,8 @@ export function ResourceManager({
     setError("");
     setMessage("");
     try {
-      const body = editing ? { ...form, id: editing.id } : form;
+      const body = editing ? { ...form, id: editing.id } : { ...form };
+      omitFieldNamesOnSave.forEach((field) => { delete (body as Record<string, unknown>)[field]; });
       await adminFetch(endpoint, {
         method: editing ? "PUT" : "POST",
         body: JSON.stringify(body)

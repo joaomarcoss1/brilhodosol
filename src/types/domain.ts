@@ -10,6 +10,7 @@ export type TimeEntryStatus =
 export type JustificationStatus = "pending" | "approved" | "rejected";
 export type PayrollStatus =
   | "draft"
+  | "incomplete_preview"
   | "checking"
   | "ready"
   | "reviewed"
@@ -47,6 +48,8 @@ export type Branch = {
   geolocation_status?: "pending" | "confirmed" | "needs_review";
   gps_ready?: boolean;
   last_gps_test_at?: string | null;
+  last_inside_radius_test_at?: string | null;
+  last_outside_radius_test_at?: string | null;
   employee_count?: number;
   active: boolean;
   created_at: string;

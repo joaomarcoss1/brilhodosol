@@ -64,7 +64,10 @@ export async function POST(request: NextRequest) {
     const canClockIn = Boolean(branch.active && geofenceEnabled && hasBranchCoords && gpsReady && insideRadius && gpsAccuracyOk);
     const reason = gpsReason({ branchActive: Boolean(branch.active), geofenceEnabled, hasBranchCoords, gpsReady, insideRadius, gpsAccuracyOk });
 
-    await supabase.from("branches").update({ last_gps_test_at: new Date().toISOString() }).eq("id", body.branchId);
+    const gpsTestUpdate: Record<string, string> = { last_gps_test_at: new Date().toISOString() };
+    if (insideRadius) gpsTestUpdate.last_inside_radius_test_at = gpsTestUpdate.last_gps_test_at;
+    if (!insideRadius && hasBranchCoords) gpsTestUpdate.last_outside_radius_test_at = gpsTestUpdate.last_gps_test_at;
+    await supabase.from("branches").update(gpsTestUpdate).eq("id", body.branchId);
 
     return ok({
       employee_id: body.employeeId || null,

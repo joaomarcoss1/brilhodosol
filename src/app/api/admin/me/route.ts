@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/server/auth";
+import { canManageAdmins, canManageBranches, canManagePayroll, canViewFinancialData, isMasterAdmin } from "@/lib/server/branch-permissions";
 import { ok } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const auth = await requireAdmin(request);
   if ("error" in auth) return auth.error;
+  const canFinancial = canViewFinancialData(auth.context);
+  const master = isMasterAdmin(auth.context);
   return ok({
     admin: {
       id: auth.context.id,
@@ -17,7 +20,15 @@ export async function GET(request: NextRequest) {
       role: auth.context.role,
       branchId: auth.context.branchId,
       allowedBranchIds: auth.context.allowedBranchIds,
-      canViewFinancialData: auth.context.canViewFinancialData
+      canViewFinancialData: auth.context.canViewFinancialData,
+      is_master: master,
+      can_view_financial: canFinancial,
+      can_edit_financial: canFinancial,
+      can_export_financial: canFinancial,
+      can_manage_payroll: canManagePayroll(auth.context),
+      can_reopen_payroll: master,
+      can_manage_admins: canManageAdmins(auth.context),
+      can_manage_branches: canManageBranches(auth.context)
     }
   });
 }

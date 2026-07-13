@@ -14,7 +14,17 @@ import { adminFetch, downloadAdminFile } from "@/lib/client/admin-api";
 import { formatMoney, minutesToHourText } from "@/lib/format";
 
 const closedStatuses = new Set(["closed", "closed_with_exceptions", "paid"]);
-
+const statusLabels: Record<string, string> = {
+  draft: "Prévia",
+  incomplete_preview: "Prévia incompleta",
+  checking: "Em conferência",
+  ready: "Pronta",
+  reviewed: "Revisada",
+  closed: "Fechada",
+  closed_with_exceptions: "Fechada com exceção",
+  paid: "Paga",
+  reopened: "Reaberta"
+};
 export function PayrollPage() {
   const [branches, setBranches] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -31,9 +41,11 @@ export function PayrollPage() {
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | "">("");
   const [closureReview, setClosureReview] = useState<any | null>(null);
   const [reopenReason, setReopenReason] = useState("");
+  const [adminProfile, setAdminProfile] = useState<any | null>(null);
 
   useEffect(() => {
-    adminFetch<any>("/api/admin/options/branches").then((data) => setBranches(data.branches || [])).catch(() => undefined);
+    adminFetch<any>("/api/admin/me").then((data) => setAdminProfile(data.admin || null)).catch(() => setAdminProfile(null));
+    adminFetch<any>("/api/admin/options/branches?status=all").then((data) => setBranches(data.branches || [])).catch(() => undefined);
     adminFetch<any>("/api/admin/options/employees").then((data) => setEmployees(data.employees || [])).catch(() => undefined);
   }, []);
 
@@ -58,6 +70,7 @@ export function PayrollPage() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function generate() {
@@ -67,9 +80,15 @@ export function PayrollPage() {
     try {
       const data = await adminFetch<any>("/api/admin/payroll", {
         method: "POST",
-        body: JSON.stringify({ ...form, branch_id: form.branch_id || null, employee_id: form.employee_id || null, payment_day: form.payment_day ? Number(form.payment_day) : null })
+        body: JSON.stringify({
+          ...form,
+          branch_id: form.branch_id || null,
+          employee_id: form.employee_id || null,
+          payment_day: form.payment_day ? Number(form.payment_day) : null,
+          request_id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+        })
       });
-      setMessage(`Folha gerada com ${data.itemsCreated} item(ns).`);
+      setMessage(data.duplicated ? data.message || "Já existia uma folha para este filtro." : `Folha gerada com ${data.itemsCreated} item(ns).`);
       await load(data.period.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao gerar folha.");
@@ -170,12 +189,17 @@ export function PayrollPage() {
     },
     { total: 0, discounts: 0, extras: 0, overtime: 0, gross: 0 }
   ), [items]);
-  const statusTone = period?.status === "paid" ? "green" : closedStatuses.has(period?.status) ? "blue" : period ? "yellow" : "neutral";
-  const statusLabel = period?.status === "draft" ? "Prévia" : period?.status === "reviewed" ? "Revisada" : period?.status === "closed" ? "Fechada" : period?.status === "closed_with_exceptions" ? "Fechada com exceção" : period?.status === "paid" ? "Paga" : period?.status === "reopened" ? "Reaberta" : "Selecione uma folha";
-  const canReview = Boolean(period && !closedStatuses.has(period.status) && period.status !== "reviewed");
-  const canClose = Boolean(period && !closedStatuses.has(period.status));
-  const canMarkPaid = Boolean(period && ["closed", "closed_with_exceptions"].includes(period.status));
-  const canReopen = Boolean(period && ["closed", "closed_with_exceptions", "paid"].includes(period.status));
+  const isIncompletePreview = period?.status === "incomplete_preview";
+  const statusTone = period?.status === "paid" ? "green" : closedStatuses.has(period?.status) ? "blue" : isIncompletePreview ? "red" : period ? "yellow" : "neutral";
+  const statusLabel = period ? statusLabels[period.status] || period.status : "Selecione uma folha";
+  const isMaster = Boolean(adminProfile?.is_master || adminProfile?.role === "master_admin");
+  const canManagePayroll = Boolean(adminProfile?.can_manage_payroll || adminProfile?.canViewFinancialData || adminProfile?.can_view_financial);
+  const canReview = Boolean(period && canManagePayroll && !closedStatuses.has(period.status) && period.status !== "reviewed");
+  const canClose = Boolean(period && canManagePayroll && !closedStatuses.has(period.status) && period.status !== "incomplete_preview");
+  const canCloseWithException = Boolean(period && period.status === "incomplete_preview" && isMaster);
+  const canMarkPaid = Boolean(period && canManagePayroll && ["closed", "closed_with_exceptions"].includes(period.status));
+  const canReopen = Boolean(period && ["closed", "closed_with_exceptions", "paid"].includes(period.status) && isMaster);
+  const canEditItems = Boolean(period && canManagePayroll && !closedStatuses.has(period.status));
   const selectedBranchName = period?.branch_id ? period.branches?.name || branches.find((branch) => branch.id === period.branch_id)?.name || "Filial selecionada" : "Todas as filiais permitidas";
   const criticalCount = closureReview?.checklist?.filter?.((item: any) => item.severity === "critical" && item.count > 0)?.reduce?.((sum: number, item: any) => sum + Number(item.count || 0), 0) || 0;
 
@@ -263,7 +287,7 @@ export function PayrollPage() {
             <div className="mb-3 grid gap-2 sm:grid-cols-2">
               <Field label="Filial/Matriz"><Select value={periodFilters.branchId} onChange={(event) => setPeriodFilters({ ...periodFilters, branchId: event.target.value })}><option value="">Todas</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</Select></Field>
               <Field label="Dia pgto."><Select value={periodFilters.paymentDay} onChange={(event) => setPeriodFilters({ ...periodFilters, paymentDay: event.target.value })}><option value="">Todos</option>{[5, 10, 15, 20, 25, 30].map((day) => <option key={day} value={day}>Dia {day}</option>)}</Select></Field>
-              <Field label="Status"><Select value={periodFilters.status} onChange={(event) => setPeriodFilters({ ...periodFilters, status: event.target.value })}><option value="">Todos</option><option value="draft">Prévia</option><option value="reviewed">Revisada</option><option value="closed">Fechada</option><option value="closed_with_exceptions">Fechada com exceção</option><option value="paid">Paga</option></Select></Field>
+              <Field label="Status"><Select value={periodFilters.status} onChange={(event) => setPeriodFilters({ ...periodFilters, status: event.target.value })}><option value="">Todos</option><option value="draft">Prévia</option><option value="incomplete_preview">Prévia incompleta</option><option value="reviewed">Revisada</option><option value="closed">Fechada</option><option value="closed_with_exceptions">Fechada com exceção</option><option value="paid">Paga</option></Select></Field>
               <Button className="self-end" variant="secondary" onClick={() => load(undefined, periodFilters)}>Aplicar filtros</Button>
             </div>
             <div className="grid max-h-[460px] gap-2 overflow-auto pr-1">
@@ -272,7 +296,7 @@ export function PayrollPage() {
                   <strong className="block text-slate-950">{item.title}</strong>
                   <span className="text-sm font-semibold text-slate-600">{item.start_date} até {item.end_date}</span>
                   <span className="mt-1 block text-xs font-bold text-slate-500">{item.branches?.name || "Todas as unidades"}{item.payment_day ? ` • Dia ${item.payment_day}` : ""}</span>
-                  <span className="mt-2 block"><Badge tone={item.status === "paid" ? "green" : closedStatuses.has(item.status) ? "blue" : "yellow"}>{item.status}</Badge></span>
+                  <span className="mt-2 block"><Badge tone={item.status === "paid" ? "green" : closedStatuses.has(item.status) ? "blue" : item.status === "incomplete_preview" ? "red" : "yellow"}>{statusLabels[item.status] || item.status}</Badge></span>
                 </button>
               ))}
               {!periods.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">Nenhuma folha criada para os filtros aplicados.</p> : null}
@@ -284,12 +308,13 @@ export function PayrollPage() {
             <div>
               <p className="text-xs font-black uppercase tracking-[0.16em] text-brand-700">Conferência financeira oficial</p>
               <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">{period?.title || "Selecione uma folha"}</h2>
-              {period ? <p className="text-sm font-semibold text-slate-600">{period.start_date} até {period.end_date} • <Badge tone={statusTone as any}>{period.status}</Badge></p> : null}
+              {period ? <p className="text-sm font-semibold text-slate-600">{period.start_date} até {period.end_date} • <Badge tone={statusTone as any}>{statusLabel}</Badge></p> : null}
             </div>
             {selected ? (
               <div className="admin-action-row">
                 {canReview ? <Button variant="ghost" size="sm" onClick={() => updateStatus("reviewed")} loading={loading} disabled={loading}>Revisar</Button> : null}
                 {canClose ? <Button variant="ghost" size="sm" onClick={() => updateStatus("closed")} loading={loading} disabled={loading}><Lock className="h-4 w-4" />Fechar</Button> : null}
+                {canCloseWithException ? <Button variant="secondary" size="sm" onClick={() => setClosureReview({ requiresClosureReview: true, allowMasterOverride: true, message: "Prévia incompleta: informe justificativa no fechamento com exceção.", checklist: [] })} loading={loading} disabled={loading}><ShieldCheck className="h-4 w-4" />Fechar com exceção</Button> : null}
                 {canMarkPaid ? <Button variant="ghost" size="sm" onClick={() => updateStatus("paid")} loading={loading} disabled={loading}>Marcar paga</Button> : null}
                 {canReopen ? <Button variant="ghost" size="sm" onClick={() => setClosureReview({ mode: "reopen" })} disabled={loading}><Unlock className="h-4 w-4" />Reabrir</Button> : null}
                 <Button size="sm" variant="secondary" onClick={() => exportPayroll("pdf")} loading={exporting === "pdf"} disabled={Boolean(exporting)}><Download className="h-4 w-4" />PDF premium</Button>
@@ -302,7 +327,30 @@ export function PayrollPage() {
               <StatCard label="Total bruto" value={formatMoney(summary.gross)} tone="slate" />
               <StatCard label="Descontos" value={formatMoney(summary.discounts)} tone="red" />
               <StatCard label="Acréscimos" value={formatMoney(summary.extras)} tone="yellow" hint={minutesToHourText(summary.overtime)} />
-              <StatCard label="Total líquido" value={formatMoney(summary.total)} tone="brand" />
+              <StatCard label="Total líquido" value={formatMoney(summary.total)} tone={summary.total < 0 ? "red" : "brand"} />
+            </div>
+          ) : null}
+
+          {isIncompletePreview ? (
+            <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 p-4 text-red-950">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-black">Prévia incompleta — não usar para pagamento sem conferência</h3>
+                  <p className="mt-1 text-sm font-semibold">Esta folha ainda está incompleta porque existem funcionários sem registros de ponto suficientes ou pendências críticas no período. Revise as ocorrências antes de fechar.</p>
+                </div>
+                <Badge tone="red">Bloqueio de fechamento normal</Badge>
+              </div>
+              {summary.total < 0 ? <p className="mt-3 rounded-2xl bg-white p-3 text-sm font-bold text-red-800">Valor líquido negativo gerado por ausência de pontos ou pendências no período.</p> : null}
+              {Array.isArray(period?.closure_snapshot?.reasons) && period.closure_snapshot.reasons.length ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {period.closure_snapshot.reasons.map((reason: any) => (
+                    <div key={reason.key} className="rounded-2xl bg-white p-3 text-sm font-bold text-red-900 shadow-inner">
+                      <span className="block text-xs uppercase tracking-wide text-red-600">{reason.count} pendência(s)</span>
+                      {reason.label}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {closureReview ? (
@@ -319,7 +367,7 @@ export function PayrollPage() {
                   <h3 className="text-lg font-black text-amber-950">Checklist de fechamento da folha</h3>
                   <p className="text-sm font-semibold text-amber-900">Resolva as pendências críticas antes de fechar. O sistema bloqueia fechamento inseguro.</p>
                   <div className="grid gap-2 md:grid-cols-2">{(closureReview.checklist || []).filter((item: any) => item.count > 0).map((item: any) => <div key={item.check_type} className="rounded-2xl border border-amber-200 bg-white p-3"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><strong className="text-sm text-slate-950">{item.label}</strong><Badge tone={item.severity === "critical" ? "red" : "yellow"}>{item.count}</Badge></div><p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{item.severity === "critical" ? "Crítica" : item.severity === "warning" ? "Atenção" : "Informativa"}</p></div>)}</div>
-                  <Button variant="ghost" onClick={() => setClosureReview(null)}>Entendi, vou resolver as pendências</Button>
+                  {closureReview.allowMasterOverride && period?.status === "incomplete_preview" ? <div className="grid gap-3"><Textarea value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Justificativa formal para fechar com exceção" /><Button disabled={reopenReason.trim().length < 12 || loading} loading={loading} onClick={() => updateStatus("closed", { overrideReason: reopenReason })}>Confirmar fechamento com exceção</Button></div> : null}<Button variant="ghost" onClick={() => setClosureReview(null)}>Entendi, vou resolver as pendências</Button>
                 </div>
               )}
             </div>
@@ -353,7 +401,7 @@ export function PayrollPage() {
                   <div className="flex justify-between rounded-2xl bg-white px-3 py-2 shadow-inner"><span className="font-bold text-slate-500">Atrasos</span><strong>{minutesToHourText(item.total_late_minutes)}</strong></div>
                   <div className="flex justify-between rounded-2xl bg-white px-3 py-2 shadow-inner"><span className="font-bold text-slate-500">Horas extras</span><strong>{minutesToHourText(item.overtime_minutes)}</strong></div>
                 </div>
-                <Button className="mt-3 w-full" variant="ghost" size="sm" onClick={() => beginItemEdit(item)} disabled={closedStatuses.has(period?.status)}>Detalhes / ajustar</Button>
+                <Button className="mt-3 w-full" variant="ghost" size="sm" onClick={() => beginItemEdit(item)} disabled={!canEditItems}>Detalhes / ajustar</Button>
               </article>
             ))}
             {!items.length ? <p className="rounded-2xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-500">Selecione ou gere uma folha para visualizar os itens.</p> : null}
@@ -362,7 +410,7 @@ export function PayrollPage() {
             <div className="admin-table-shell">
               <table className="w-full min-w-[1180px] table-fixed text-left text-sm payroll-table-premium">
                 <thead><tr className="bg-brand-800 text-xs uppercase tracking-[0.08em] text-white"><th className="p-3">Funcionário</th><th className="p-3">Filial</th><th className="p-3">Previstos</th><th className="p-3">Trabalhados</th><th className="p-3">Faltas desc.</th><th className="p-3">Atrasos</th><th className="p-3">Hora extra</th><th className="p-3">Descontos</th><th className="p-3">Acréscimos</th><th className="p-3">Final</th><th className="p-3">Financeiro</th></tr></thead>
-                <tbody>{items.map((item) => <tr key={item.id} className="border-b border-slate-100 odd:bg-white even:bg-brand-50/40 transition hover:bg-sun-50/60"><td className="p-3 font-bold">{item.employee_name}</td><td className="p-3">{item.branch_name}</td><td className="p-3">{item.expected_work_days}</td><td className="p-3">{item.worked_days}</td><td className="p-3">{item.discounted_absences}</td><td className="p-3">{minutesToHourText(item.total_late_minutes)}</td><td className="p-3">{minutesToHourText(item.overtime_minutes)}</td><td className="p-3">{formatMoney(item.absence_discount_amount)}</td><td className="p-3">{formatMoney(Number(item.overtime_amount || 0) + Number(item.extra_day_amount || 0))}</td><td className="p-3 font-black text-brand-800">{formatMoney(item.final_amount)}</td><td className="p-3"><Button size="sm" variant="ghost" onClick={() => beginItemEdit(item)} disabled={closedStatuses.has(period?.status)}>Editar</Button></td></tr>)}{!items.length ? <tr><td className="p-10 text-center text-slate-500" colSpan={11}>Selecione ou gere uma folha para visualizar os itens financeiros.</td></tr> : null}</tbody>
+                <tbody>{items.map((item) => <tr key={item.id} className="border-b border-slate-100 odd:bg-white even:bg-brand-50/40 transition hover:bg-sun-50/60"><td className="p-3 font-bold">{item.employee_name}</td><td className="p-3">{item.branch_name}</td><td className="p-3">{item.expected_work_days}</td><td className="p-3">{item.worked_days}</td><td className="p-3">{item.discounted_absences}</td><td className="p-3">{minutesToHourText(item.total_late_minutes)}</td><td className="p-3">{minutesToHourText(item.overtime_minutes)}</td><td className="p-3">{formatMoney(item.absence_discount_amount)}</td><td className="p-3">{formatMoney(Number(item.overtime_amount || 0) + Number(item.extra_day_amount || 0))}</td><td className="p-3 font-black text-brand-800">{formatMoney(item.final_amount)}</td><td className="p-3"><Button size="sm" variant="ghost" onClick={() => beginItemEdit(item)} disabled={!canEditItems}>Editar</Button></td></tr>)}{!items.length ? <tr><td className="p-10 text-center text-slate-500" colSpan={11}>Selecione ou gere uma folha para visualizar os itens financeiros.</td></tr> : null}</tbody>
               </table>
             </div>
           </DesktopTableShell>
