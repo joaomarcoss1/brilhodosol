@@ -1,0 +1,21 @@
+matricula,nome_completo,cpf,filial,cargo,salario,pin_inicial,entrada,saida_almoco,retorno_almoco,saida,horario_confirmado,origem
+BS03-001,Irenilde Silva Moraes,037.172.123-70,Brilho do Sol Filial 2 / BS 03,A definir,0.00,4715,07:00,10:00,12:00,18:00,sim,Mensagem WhatsApp - Filial 2 / BS 03
+AR-000013,Samuel da Paixão Colaço,035.617.483-25,Brilho do Sol Filial 2 / BS 03,Operador de Caixa,1680.00,3953,07:00,14:00,16:00,18:00,sim,Mensagem WhatsApp + ficha A R MARTINS
+AR-000028,Bruna Ferreira,049.505.923-43,Brilho do Sol Filial 2 / BS 03,Operadora de Caixa,1680.00,3903,08:00,12:00,14:00,18:00,sim,Mensagem WhatsApp + ficha A R MARTINS
+AR-000003,Antônio Carlos Silva da Conceição,076.307.673-23,Brilho do Sol Filial 01 / BS 2,Entregador de Mercadorias,1680.00,1267,07:00,11:00,13:00,18:00,sim,Mensagem WhatsApp + ficha A R MARTINS
+AB-000007,Mayara dos Reis Silva Bispo,044.078.503-02,Brilho do Sol Filial 01 / BS 2,Repositora de Mercadorias,1680.00,9835,07:00,11:00,13:00,18:00,sim,Mensagem WhatsApp + ficha ABENÇOADO; CPF da ficha oficial usado
+BS2-004,Jaqueline da Silva Oliveira,636.761.933-00,Brilho do Sol Filial 01 / BS 2,A definir,0.00,1293,07:00,13:00,15:00,18:00,sim,Mensagem WhatsApp - Filial 01 / BS 2
+AR-000022,Valdeci Souza dos Santos,608.517.683-00,Brilho do Sol Filial 01 / BS 2,Entregador de Mercadorias,1680.00,5909,07:00,13:00,15:00,18:00,sim,Mensagem WhatsApp + ficha A R MARTINS
+BS2-005,Jean Kardek Santos da Silva,053.039.033-70,Brilho do Sol Filial 01 / BS 2,A definir,0.00,9323,07:00,13:00,15:00,18:00,sim,Mensagem WhatsApp - Filial 01 / BS 2
+AR-000033,Alba Rejane Martins Borges,471.374.443-34,Brilho do Sol Filial 01 / BS 2,Comerciante Varejista,1621.00,4242,08:00,,,17:00,pendente,Ficha A R MARTINS - horário específico não informado
+AR-000008,Antônio Santana da Costa,010.619.813-04,Brilho do Sol Filial 01 / BS 2,Repositor de Mercadorias,1680.00,5646,08:00,,,17:00,pendente,Ficha A R MARTINS - horário específico não informado
+AR-000026,Daiane Borges Vieira,616.520.373-65,Brilho do Sol Filial 01 / BS 2,Operadora de Caixa,1680.00,9213,08:00,,,17:00,pendente,Ficha A R MARTINS - horário específico não informado
+AR-000030,Emerson Keneo da Silva Santos,621.244.093-01,Brilho do Sol Filial 01 / BS 2,Entregador de Mercadorias,1680.00,8932,08:00,,,17:00,pendente,Ficha A R MARTINS - horário específico não informado
+AR-000011,Gilvan Fernandes Ramos,025.130.703-48,Brilho do Sol Filial 01 / BS 2,Entregador de Mercadorias,1680.00,3546,07:00,12:00,14:00,18:00,sim,Mensagem WhatsApp 10/07/2026 + ficha A R MARTINS
+AB-000003,Antônio Domingos da Conceição,031.607.533-79,Brilho do Sol Abençoado,Entregador de Mercadorias,1680.00,2484,07:00,12:00,14:00,18:00,sim,Mensagem WhatsApp 10/07/2026 + ficha ABENÇOADO; CPF preenchido pela ficha oficial
+DB-000004,Arnaldo Gomes dos Santos,031.472.173-88,Brilho do Sol D Borges,Repositor de Mercadorias,1680.00,1950,08:00,,,17:00,pendente,Ficha D BORGES - horário específico não informado
+DB-000006,Ediane Monteiro Silva,004.399.002-98,Brilho do Sol D Borges,Operadora de Caixa,1680.00,2069,08:00,,,17:00,pendente,Ficha D BORGES - horário específico não informado
+DB-000003,Edivania Ribeiro Pereira,006.437.283-92,Brilho do Sol D Borges,Repositora de Mercadorias,1680.00,1556,08:00,,,17:00,pendente,Ficha D BORGES - horário específico não informado
+DB-000005,Francisco Italo Cunha de Souza,083.108.563-00,Brilho do Sol D Borges,Vendedor(a),1680.00,4673,08:00,,,17:00,pendente,Ficha D BORGES - horário específico não informado
+DB-000002,Givanilson Rodrigues de Oliveira,604.845.403-19,Brilho do Sol D Borges,Entregador de Mercadorias,1680.00,1169,07:00,12:00,14:00,18:00,sim,Mensagem WhatsApp 10/07/2026 + ficha D BORGES
+DB-000001,José Ricardo da Silva Frais,604.251.873-90,Brilho do Sol D Borges,Vendedor(a),1680.00,9293,08:00,,,17:00,pendente,Ficha D BORGES - horário específico não informado
