@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/server/auth";
 import { writeAuditLog } from "@/lib/server/audit";
 import { fail, ok, readJson } from "@/lib/server/http";
 import { getSystemSettings, updateSystemSettings } from "@/lib/server/settings";
+import { settingsPayloadSchema, zodErrorMessage } from "@/lib/validation/schemas";
 
 
 export async function GET(request: NextRequest) {
@@ -20,8 +21,10 @@ export async function PUT(request: NextRequest) {
   if ("error" in auth) return auth.error;
   try {
     const oldSettings = await getSystemSettings(auth.supabase);
-    const body = await readJson<Record<string, unknown>>(request);
-    await updateSystemSettings(auth.supabase, body as any);
+    const rawBody = await readJson<unknown>(request);
+    const parsedBody = settingsPayloadSchema.safeParse(rawBody);
+    if (!parsedBody.success) return fail(zodErrorMessage(parsedBody.error), 400);
+    await updateSystemSettings(auth.supabase, parsedBody.data);
     const newSettings = await getSystemSettings(auth.supabase);
     await writeAuditLog({
       supabase: auth.supabase,

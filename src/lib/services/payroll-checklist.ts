@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchOperationalHolidays, pendingHolidayDecisions } from "@/lib/services/holiday-operations";
 
 type Check = {
   check_type: string;
@@ -32,7 +33,7 @@ export async function buildPayrollClosureChecklist(supabase: SupabaseClient, pay
     supabase.from("payroll_items").select("id, employee_id, employee_name, branch_id, final_amount").eq("payroll_period_id", payrollPeriodId),
     supabase.from("branches").select("id,name,latitude,longitude,allowed_radius_meters,geofence_enabled,geolocation_status,gps_ready,active")
   ]);
-  for (const response of [employeesRes, justificationsRes, overtimeRes, entriesRes, itemsRes]) {
+  for (const response of [employeesRes, justificationsRes, overtimeRes, entriesRes, itemsRes, branchesRes]) {
     if (response.error) throw new Error(response.error.message);
   }
 
@@ -42,6 +43,14 @@ export async function buildPayrollClosureChecklist(supabase: SupabaseClient, pay
   const overtime = overtimeRes.data || [];
   const items = itemsRes.data || [];
   const branches = branchesRes.data || [];
+  const employeeBranchIds = [...new Set(employees.map((employee: any) => employee.branch_id).filter(Boolean))] as string[];
+  const operationalHolidays = await fetchOperationalHolidays({
+    supabase,
+    startDate,
+    endDate,
+    branchIds: branchId ? [branchId] : employeeBranchIds
+  });
+  const pendingHolidays = pendingHolidayDecisions(operationalHolidays);
 
   const byEmployeeDate = new Map<string, any[]>();
   entries.forEach((entry: any) => {
@@ -71,6 +80,7 @@ export async function buildPayrollClosureChecklist(supabase: SupabaseClient, pay
   const checks: Check[] = [
     check("pending_justifications", "critical", "Justificativas de falta pendentes", pendingJustifications),
     check("pending_overtime", "critical", "Horas extras pendentes de revisão", pendingOvertime),
+    check("pending_holiday_decisions", "critical", "Feriados sem decisão de funcionamento", pendingHolidays),
     check("outside_radius_pending", "critical", "Pontos fora do raio pendentes", outsideRadius),
     check("pending_occurrences", "critical", "Ocorrências de ponto pendentes", pendingOccurrence),
     check("missing_end_shift", "critical", "Expedientes sem encerramento", missingEnd),

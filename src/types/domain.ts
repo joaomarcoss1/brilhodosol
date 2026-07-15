@@ -20,15 +20,19 @@ export type PayrollStatus =
   | "reopened";
 export type PayrollPeriodType = "monthly" | "biweekly" | "daily" | "custom";
 export type HolidayType = "holiday" | "day_off" | "no_work";
+export type HolidayOperationStatus = "pending" | "open" | "closed";
 
 export type OccurrenceReviewStatus =
   "pending_review" | "approved" | "rejected" | "adjusted" | "cancelled";
 
 export type MinimalHoliday = {
+  id?: string;
   holiday_date: string;
   branch_id: string | null;
   type: HolidayType;
   active: boolean;
+  operation_status?: HolidayOperationStatus;
+  decision_id?: string | null;
 };
 
 export type Branch = {
@@ -77,6 +81,7 @@ export type Employee = {
   pin_hash: string;
   active: boolean;
   admission_date: string;
+  termination_date?: string | null;
   expected_start_time: string;
   expected_end_time: string;
   expected_daily_minutes: number;
@@ -167,4 +172,5 @@ export type SystemSettings = {
   payroll_block_critical_pending?: boolean;
   payroll_pdf_max_detailed_rows?: number;
   payroll_pdf_block_rows?: number;
+  holiday_decision_notification_days?: number;
 };

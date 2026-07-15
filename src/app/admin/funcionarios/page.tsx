@@ -83,6 +83,7 @@ const baseFields = [
     hiddenOnEdit: false,
   },
   { name: "admission_date", label: "Data de admissão", type: "date" as const },
+  { name: "termination_date", label: "Data de desligamento", type: "date" as const },
   {
     name: "expected_start_time",
     label: "Entrada prevista",
@@ -252,6 +253,8 @@ export default function Page() {
         exportEndpoint="/api/admin/employees/export"
         exportFileBase="funcionarios-brilho-do-sol"
         omitFieldNamesOnSave={omitFieldNamesOnSave}
+        serverPagination
+        pageSize={25}
         filters={[
           {
             key: "branch_id",
@@ -269,10 +272,10 @@ export default function Page() {
             options: [5, 10, 15, 20, 25, 30].map((day) => ({ label: `Dia ${day}`, value: day }))
           },
           {
-            key: "active",
+            key: "status",
             label: "Status",
             allLabel: "Todos",
-            options: [{ label: "Ativo", value: "true" }, { label: "Inativo", value: "false" }]
+            options: [{ label: "Ativo", value: "active" }, { label: "Inativo", value: "inactive" }]
           },
           {
             key: "employment_type",

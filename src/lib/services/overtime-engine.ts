@@ -49,10 +49,16 @@ export function detectOvertimeCandidates(params: {
 }
 
 export function approvedOvertimeForDate(reviews: any[], employeeId: string, date: string) {
-  const review = reviews.find((item) => item.employee_id === employeeId && item.entry_date === date);
-  if (!review) return 0;
-  if (review.status === "approved" || review.status === "adjusted") {
-    return Number(review.approved_overtime_minutes || review.overtime_minutes || 0);
-  }
-  return 0;
+  const valid = reviews.filter((item) =>
+    item.employee_id === employeeId &&
+    item.entry_date === date &&
+    (item.status === "approved" || item.status === "adjusted")
+  );
+  const seen = new Set<string>();
+  return valid.reduce((total, review) => {
+    const sourceKey = String(review.idempotency_key || review.source_entry_id || review.time_entry_id || review.id || "");
+    if (sourceKey && seen.has(sourceKey)) return total;
+    if (sourceKey) seen.add(sourceKey);
+    return total + Number(review.approved_overtime_minutes ?? review.overtime_minutes ?? 0);
+  }, 0);
 }

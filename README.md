@@ -2,6 +2,10 @@
 
 Sistema profissional para controle de ponto, RH, justificativas, auditoria, relatórios e folha de pagamento do **Brilho do Sol Supermercado**.
 
+> **Versão v019 — feriados operacionais, folha quinzenal e estabilidade administrativa**
+>
+> Esta versão adiciona decisão de funcionamento por feriado e filial, protege a folha contra descontos em fechamento remunerado, corrige o cálculo quinzenal, soma múltiplas horas extras aprovadas, melhora filtros/paginação do administrativo e separa a configuração inicial do login comum. O fluxo de PIN de 4 dígitos dos funcionários foi preservado.
+
 O projeto usa dados reais do Supabase nas telas finais. Os seeds desta versão são limpos: não criam funcionários, Pix, folha ou pontos demonstrativos.
 
 ## Stack
@@ -61,7 +65,19 @@ supabase/migrations/005_commercial_hardening_google_maps.sql
 supabase/migrations/006_final_production_hardening.sql
 supabase/migrations/007_employee_import_and_professional_modules.sql
 supabase/migrations/008_cleanup_demo_and_payroll_polish.sql
+supabase/migrations/009_fluid_app_colaboradores_reais.sql
+supabase/migrations/010_update_colaboradores_horarios_2026_07_10.sql
+supabase/migrations/011_branch_names_gps_audit_colaboradores_2026_07_10.sql
+supabase/migrations/012_homologacao_final_gps_folha_seguranca.sql
+supabase/migrations/013_payroll_branch_payment_report_polish.sql
+supabase/migrations/014_seguranca_relatorios_folha_premium.sql
+supabase/migrations/015_homologacao_4_lojas_readiness_preview.sql
+supabase/migrations/016_v017_seguranca_final_homologacao_producao.sql
+supabase/migrations/017_v018_admin_performance_branches.sql
+supabase/migrations/018_v019_holiday_operations_payroll_hardening.sql
 ```
+
+A migration `016` incluída neste pacote é a versão idempotente corrigida. A migration `018` não altera `pin_hash`, o PIN de 4 dígitos nem o portal de ponto.
 
 4. Opcionalmente, execute apenas o seed limpo de produção para configurações e filiais-base de Codó-MA:
 
@@ -76,12 +92,13 @@ As migrations criam tabelas, enums, índices, RLS, bucket privado de justificati
 ## Primeiro admin master
 
 1. Configure `MASTER_ADMIN_EMAIL`, `MASTER_ADMIN_NAME`, `MASTER_ADMIN_PASSWORD` e `MASTER_SETUP_TOKEN`.
-2. Acesse `/admin/login`.
-3. Informe e-mail, senha e o token master no primeiro acesso.
+2. Somente na primeira ativação, acesse `/admin/configuracao-inicial`.
+3. Informe nome, e-mail, senha administrativa e o token de configuração.
 4. O sistema cria ou vincula o usuário no Supabase Auth e grava o perfil `master_admin`.
-5. Depois do primeiro acesso, entre normalmente só com e-mail e senha.
+5. Após existir um master ativo, a rota de configuração é bloqueada e redireciona para o login.
+6. O acesso diário em `/admin/login` usa somente e-mail e senha.
 
-O login administrativo fica em `/admin/login`. A recuperação de senha fica em `/admin/recuperar-senha`.
+A recuperação de senha fica em `/admin/recuperar-senha`. A senha administrativa possui regra própria e não modifica os PINs dos funcionários.
 
 O admin master pode criar outros administradores em `/admin/administradores` e promover usuários para perfis administrativos.
 
@@ -104,6 +121,7 @@ O admin master pode criar outros administradores em `/admin/administradores` e p
 - `/admin/funcionarios/importar`
 - `/admin/filiais`
 - `/admin/horarios`
+- `/admin/feriados`
 - `/admin/pontos`
 - `/admin/revisoes-ponto`
 - `/admin/horas-extras`
@@ -161,7 +179,7 @@ A folha em PDF usa o relatório `type=payroll` com dados de salário, diária, f
 2. Execute todas as migrations em ordem, incluindo `008_cleanup_demo_and_payroll_polish.sql`.
 3. Execute `supabase/seed/001_seed.sql` apenas para configurações e filiais-base, se quiser.
 4. Rode `npm run dev`.
-5. Acesse `/admin/login` com o e-mail/senha configurados no `.env.local` e token master no primeiro acesso.
+5. Se ainda não existir master, acesse `/admin/configuracao-inicial`; depois utilize `/admin/login` somente com e-mail e senha.
 6. Ajuste as coordenadas reais das filiais em Codó-MA no painel de Filiais.
 7. Cadastre/importe funcionários reais e gere PINs individuais.
 8. Teste o ponto no celular dentro e fora do raio de 900m.

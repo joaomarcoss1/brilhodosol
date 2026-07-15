@@ -11,7 +11,7 @@ export async function writeAuditLog(params: {
   newData?: unknown;
 }) {
   const { supabase, context, action, entity, entityId, oldData, newData } = params;
-  await supabase.from("audit_logs").insert({
+  const { error } = await supabase.from("audit_logs").insert({
     user_id: context?.userId || null,
     user_email: context?.email || "sistema",
     action,
@@ -20,4 +20,5 @@ export async function writeAuditLog(params: {
     old_data: oldData ?? null,
     new_data: newData ?? null
   });
+  if (error) throw new Error(`Falha ao registrar auditoria: ${error.message}`);
 }

@@ -42,5 +42,6 @@ export const defaultSettings = {
   google_maps_enabled: true,
   payroll_block_critical_pending: true,
   payroll_pdf_max_detailed_rows: 300,
-  payroll_pdf_block_rows: 1500
+  payroll_pdf_block_rows: 1500,
+  holiday_decision_notification_days: 7
 } as const;

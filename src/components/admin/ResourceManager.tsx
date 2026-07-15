@@ -14,7 +14,7 @@ import { adminFetch, downloadAdminFile } from "@/lib/client/admin-api";
 export type ResourceField = {
   name: string;
   label: string;
-  type?: "text" | "number" | "date" | "time" | "select" | "textarea" | "checkbox" | "password";
+  type?: "text" | "number" | "date" | "time" | "select" | "multiselect" | "textarea" | "checkbox" | "password";
   required?: boolean;
   options?: Array<{ label: string; value: string | number | boolean }>;
   optionsEndpoint?: string;
@@ -63,7 +63,9 @@ export function ResourceManager({
   filters = EMPTY_FILTERS,
   exportEndpoint,
   exportFileBase,
-  omitFieldNamesOnSave = EMPTY_OMIT_FIELDS
+  omitFieldNamesOnSave = EMPTY_OMIT_FIELDS,
+  serverPagination = false,
+  pageSize = 25
 }: {
   title: string;
   description?: string;
@@ -77,6 +79,8 @@ export function ResourceManager({
   exportEndpoint?: string;
   exportFileBase?: string;
   omitFieldNamesOnSave?: string[];
+  serverPagination?: boolean;
+  pageSize?: number;
 }) {
   const [items, setItems] = useState<any[]>([]);
   const [options, setOptions] = useState<Record<string, Array<{ label: string; value: string }>>>({});
@@ -89,25 +93,53 @@ export function ResourceManager({
   const [message, setMessage] = useState("");
   const [confirmDeactivation, setConfirmDeactivation] = useState<any | null>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await adminFetch<any>(endpoint);
+      let requestEndpoint = endpoint;
+      if (serverPagination) {
+        const url = new URL(endpoint, window.location.origin);
+        url.searchParams.set("page", String(page));
+        url.searchParams.set("pageSize", String(pageSize));
+        if (debouncedSearch.trim()) url.searchParams.set("q", debouncedSearch.trim());
+        Object.entries(filterValues).forEach(([key, value]) => {
+          if (value) url.searchParams.set(exportParamKey(key), value);
+        });
+        requestEndpoint = `${url.pathname}${url.search}`;
+      }
+      const data = await adminFetch<any>(requestEndpoint);
       setItems(data[collectionKey] || []);
+      if (serverPagination) setTotalRecords(Number(data.pagination?.total || 0));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
     } finally {
       setLoading(false);
     }
-  }, [collectionKey, endpoint]);
+  }, [collectionKey, debouncedSearch, endpoint, filterValues, page, pageSize, serverPagination]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(search), 350);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!confirmDeactivation) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) setConfirmDeactivation(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [confirmDeactivation, saving]);
 
   const optionSources = [
     ...fields.map((field) => ({ ...field, optionStoreKey: field.name })),
@@ -164,6 +196,7 @@ export function ResourceManager({
 
   const visibleFields = useMemo(() => fields.filter((field) => !(editing && field.hiddenOnEdit)), [editing, fields]);
   const filteredItems = useMemo(() => {
+    if (serverPagination) return items;
     const term = search.trim().toLowerCase();
     return items.filter((item) => {
       const matchesSearch = !term || JSON.stringify(item).toLowerCase().includes(term);
@@ -175,7 +208,7 @@ export function ResourceManager({
       });
       return matchesSearch && matchesFilters;
     });
-  }, [items, search, filters, filterValues]);
+  }, [items, search, filters, filterValues, serverPagination]);
 
   function exportParamKey(key: string) {
     if (key === "branch_id") return "branchId";
@@ -195,9 +228,9 @@ export function ResourceManager({
     await downloadAdminFile(`${exportEndpoint}?${params.toString()}`, `${exportFileBase}.${ext}`);
   }
 
-  const perPage = 25;
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / perPage));
-  const pageItems = filteredItems.slice((page - 1) * perPage, page * perPage);
+  const totalPages = Math.max(1, Math.ceil((serverPagination ? totalRecords : filteredItems.length) / pageSize));
+  const pageItems = serverPagination ? filteredItems : filteredItems.slice((page - 1) * pageSize, page * pageSize);
+  const displayedCount = serverPagination ? totalRecords : filteredItems.length;
 
   function setValue(name: string, value: unknown) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -310,9 +343,32 @@ export function ResourceManager({
               if (field.type === "checkbox") {
                 return (
                   <label key={field.name} className="flex min-h-12 min-w-0 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold leading-tight">
-                    <input type="checkbox" checked={Boolean(value)} onChange={(event) => setValue(field.name, event.target.checked)} />
-                    {field.label}
+                    <input className="h-4 w-4 shrink-0" type="checkbox" checked={Boolean(value)} onChange={(event) => setValue(field.name, event.target.checked)} />
+                    <span className="min-w-0 whitespace-normal">{field.label}</span>
                   </label>
+                );
+              }
+              if (field.type === "multiselect") {
+                const selected = Array.isArray(value) ? value.map(String) : String(value || "").split(",").filter(Boolean);
+                const fieldOptions = field.options || options[field.name] || [];
+                return (
+                  <fieldset key={field.name} className="rounded-2xl border border-slate-200 bg-white p-3 lg:col-span-2">
+                    <legend className="px-1 text-sm font-black text-slate-800">{field.label}</legend>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {fieldOptions.map((option) => {
+                        const optionValue = String(option.value);
+                        return (
+                          <label key={optionValue} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold">
+                            <input type="checkbox" checked={selected.includes(optionValue)} onChange={(event) => {
+                              const next = event.target.checked ? [...new Set([...selected, optionValue])] : selected.filter((item) => item !== optionValue);
+                              setValue(field.name, next);
+                            }} />
+                            <span>{option.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
                 );
               }
               return (
@@ -342,7 +398,7 @@ export function ResourceManager({
       <Card>
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm font-black text-slate-950">{filteredItems.length} registro(s)</p>
+            <p className="text-sm font-black text-slate-950">{displayedCount} registro(s)</p>
             <p className="text-xs font-semibold text-slate-500">Listagem otimizada com cards no mobile e tabela no desktop.</p>
           </div>
           <div className="grid w-full gap-2 md:max-w-3xl md:grid-cols-[1fr_auto]">
@@ -421,11 +477,11 @@ export function ResourceManager({
                   <thead>
                     <tr className="bg-brand-700 text-xs uppercase text-white">
                       {columns.map((column) => (
-                        <th key={column.key} className="px-3 py-3 text-left align-middle">
+                        <th key={column.key} className="sticky top-0 z-10 bg-brand-700 px-3 py-3 text-left align-middle">
                           {column.label}
                         </th>
                       ))}
-                      <th className="px-3 py-3 text-left align-middle">Ações</th>
+                      <th className="sticky top-0 z-10 bg-brand-700 px-3 py-3 text-left align-middle">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -468,9 +524,9 @@ export function ResourceManager({
       </Card>
       {confirmDeactivation ? (
         <div className="fixed inset-0 z-50 grid place-items-end bg-slate-950/45 p-0 backdrop-blur-sm sm:place-items-center sm:p-4">
-          <div className="w-full max-w-md rounded-t-[2rem] bg-white p-5 shadow-[0_28px_90px_rgba(15,23,42,0.25)] sm:rounded-3xl">
+          <div role="dialog" aria-modal="true" aria-labelledby="deactivate-dialog-title" className="w-full max-w-md rounded-t-[2rem] bg-white p-5 shadow-[0_28px_90px_rgba(15,23,42,0.25)] sm:rounded-3xl">
             <div className="mb-4 rounded-2xl bg-red-50 p-4 text-red-900">
-              <h3 className="font-black">Desativar registro?</h3>
+              <h3 id="deactivate-dialog-title" className="font-black">Desativar registro?</h3>
               <p className="mt-1 text-sm font-medium">Esta ação preserva o histórico, mas remove o registro das listas ativas.</p>
             </div>
             <p className="text-sm text-slate-600">Confirme a desativação de <strong>{confirmDeactivation.name || confirmDeactivation.full_name || confirmDeactivation.title || "registro selecionado"}</strong>.</p>

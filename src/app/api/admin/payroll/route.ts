@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { calculatePayrollItemWithEngines } from "@/lib/services/payroll-engine";
+import { eachDateInclusive, normalizeMoney } from "@/lib/calculations";
 import { fetchScheduleContext } from "@/lib/services/schedule-engine";
 import { requireAdmin } from "@/lib/server/auth";
 import { writeAuditLog } from "@/lib/server/audit";
@@ -8,11 +9,14 @@ import { fail, ok, readJson } from "@/lib/server/http";
 import { canAccessAllBranches, canAccessBranch, canViewFinancialData, scopeByBranch } from "@/lib/server/branch-permissions";
 import { getSystemSettings } from "@/lib/server/settings";
 import { buildPayrollClosureChecklist } from "@/lib/services/payroll-checklist";
+import { pendingHolidayDecisions } from "@/lib/services/holiday-operations";
+import { payrollCreateSchema, payrollStatusSchema, zodErrorMessage } from "@/lib/validation/schemas";
 
 function buildPayrollIdempotencyKey(contextUserId: string, body: any) {
   const normalized = {
     created_by: contextUserId,
     branch_id: body.branch_id || "all",
+    period_type: body.period_type || "monthly",
     start_date: body.start_date,
     end_date: body.end_date,
     payment_day: body.payment_day ? Number(body.payment_day) : "all",
@@ -49,10 +53,9 @@ function resolveSalarySnapshot(employee: any, history: any[], startDate: string,
       const validUntil = item.valid_until || "9999-12-31";
       return validFrom <= endDate && validUntil >= startDate;
     })
-    .sort((a, b) => String(b.valid_from || b.effective_from).localeCompare(String(a.valid_from || a.effective_from)));
+    .sort((a, b) => String(a.valid_from || a.effective_from).localeCompare(String(b.valid_from || b.effective_from)));
 
-  const selected = candidates[0];
-  if (!selected) {
+  if (!candidates.length) {
     return {
       employee,
       salaryHistory: null,
@@ -65,24 +68,53 @@ function resolveSalarySnapshot(employee: any, history: any[], startDate: string,
     };
   }
 
+  const dates = eachDateInclusive(startDate, endDate);
+  const segments = new Map<string, { salary_history_id: string; monthly_salary: number; daily_rate: number | null; daily_rate_mode: string; days: number; valid_from: string; valid_until: string | null }>();
+  let monthlySalaryTotal = 0;
+  let latest = candidates[0];
+
+  for (const date of dates) {
+    const match = [...candidates].reverse().find((item) => {
+      const validFrom = item.valid_from || item.effective_from || employee.admission_date;
+      const validUntil = item.valid_until || "9999-12-31";
+      return validFrom <= date && validUntil >= date;
+    }) || null;
+    const monthlySalary = Number(match?.monthly_salary ?? employee.monthly_salary ?? 0);
+    monthlySalaryTotal += monthlySalary;
+    if (match) {
+      latest = match;
+      const key = String(match.id);
+      const existing = segments.get(key);
+      segments.set(key, {
+        salary_history_id: key,
+        monthly_salary: monthlySalary,
+        daily_rate: match.daily_rate === null || match.daily_rate === undefined ? null : Number(match.daily_rate),
+        daily_rate_mode: match.daily_rate_mode,
+        days: (existing?.days || 0) + 1,
+        valid_from: match.valid_from || match.effective_from,
+        valid_until: match.valid_until || null
+      });
+    }
+  }
+
+  const weightedMonthlySalary = normalizeMoney(monthlySalaryTotal / Math.max(1, dates.length));
   const employeeWithHistoricalSalary = {
     ...employee,
-    monthly_salary: Number(selected.monthly_salary || 0),
-    daily_rate: selected.daily_rate === null || selected.daily_rate === undefined ? null : Number(selected.daily_rate),
-    daily_rate_mode: selected.daily_rate_mode
+    monthly_salary: weightedMonthlySalary,
+    daily_rate: latest.daily_rate === null || latest.daily_rate === undefined ? employee.daily_rate : Number(latest.daily_rate),
+    daily_rate_mode: latest.daily_rate_mode || employee.daily_rate_mode
   };
 
   return {
     employee: employeeWithHistoricalSalary,
-    salaryHistory: selected,
+    salaryHistory: latest,
     snapshot: {
-      source: "employee_salary_history",
-      salary_history_id: selected.id,
-      monthly_salary: selected.monthly_salary,
-      daily_rate: selected.daily_rate,
-      daily_rate_mode: selected.daily_rate_mode,
-      valid_from: selected.valid_from || selected.effective_from,
-      valid_until: selected.valid_until
+      source: "employee_salary_history_weighted",
+      monthly_salary: weightedMonthlySalary,
+      daily_rate: employeeWithHistoricalSalary.daily_rate,
+      daily_rate_mode: employeeWithHistoricalSalary.daily_rate_mode,
+      period_days: dates.length,
+      segments: [...segments.values()]
     }
   };
 }
@@ -126,8 +158,10 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
   if (!canViewFinancialData(auth.context)) return fail("Você não tem permissão para acessar folha de pagamento.", 403);
   try {
-    const body = await readJson<any>(request);
-    if (!body.title || !body.start_date || !body.end_date) return fail("Informe título e período da folha.", 400);
+    const rawBody = await readJson<unknown>(request);
+    const parsedBody = payrollCreateSchema.safeParse(rawBody);
+    if (!parsedBody.success) return fail(zodErrorMessage(parsedBody.error), 400);
+    const body = parsedBody.data;
     if (body.branch_id && !canAccessBranch(auth.context, body.branch_id)) return fail("Você não tem acesso a esta filial.", 403);
     if (!body.branch_id && !canAccessAllBranches(auth.context)) return fail("Selecione uma filial permitida para gerar a folha.", 403);
 
@@ -140,7 +174,8 @@ export async function POST(request: NextRequest) {
     if (existingPeriodError && !String(existingPeriodError.message || "").toLowerCase().includes("idempotency_key")) {
       return fail("Erro ao verificar duplicidade da folha.", 500, existingPeriodError.message);
     }
-    if (existingPeriod) {
+    const editableExistingStatuses = new Set(["draft", "incomplete_preview", "checking", "ready", "reviewed", "reopened"]);
+    if (existingPeriod && !editableExistingStatuses.has(existingPeriod.status)) {
       const { count } = await auth.supabase
         .from("payroll_items")
         .select("id", { count: "exact", head: true })
@@ -154,24 +189,60 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { data: period, error: periodError } = await auth.supabase
-      .from("payroll_periods")
-      .insert({
-        title: body.title,
-        period_type: body.period_type || "monthly",
-        start_date: body.start_date,
-        end_date: body.end_date,
-        branch_id: body.branch_id || null,
-        status: "draft",
-        payment_day: body.payment_day ? Number(body.payment_day) : null,
-        created_by: auth.context.userId,
-        notes: body.notes || null,
-        idempotency_key: idempotencyKey
-      })
-      .select("*")
-      .single();
-
-    if (periodError) return fail("Erro ao criar período de folha.", 500, periodError.message);
+    let period: any;
+    let regenerated = false;
+    if (existingPeriod) {
+      regenerated = true;
+      const [deleteItems, deleteChecks] = await Promise.all([
+        auth.supabase.from("payroll_items").delete().eq("payroll_period_id", existingPeriod.id),
+        auth.supabase.from("payroll_closure_checks").delete().eq("payroll_period_id", existingPeriod.id)
+      ]);
+      if (deleteItems.error || deleteChecks.error) {
+        return fail("Não foi possível preparar a folha para recálculo.", 500, deleteItems.error?.message || deleteChecks.error?.message);
+      }
+      const { data: resetPeriod, error: resetError } = await auth.supabase
+        .from("payroll_periods")
+        .update({
+          title: body.title,
+          period_type: body.period_type || "monthly",
+          start_date: body.start_date,
+          end_date: body.end_date,
+          branch_id: body.branch_id || null,
+          status: "draft",
+          payment_day: body.payment_day ? Number(body.payment_day) : null,
+          notes: body.notes || null,
+          closed_at: null,
+          reopened_at: null,
+          reopened_reason: null,
+          closure_checklist: null,
+          closure_snapshot: null,
+          closure_override_reason: null
+        })
+        .eq("id", existingPeriod.id)
+        .select("*")
+        .single();
+      if (resetError) return fail("Não foi possível recalcular a folha existente.", 500, resetError.message);
+      period = resetPeriod;
+    } else {
+      const { data: createdPeriod, error: periodError } = await auth.supabase
+        .from("payroll_periods")
+        .insert({
+          title: body.title,
+          period_type: body.period_type || "monthly",
+          start_date: body.start_date,
+          end_date: body.end_date,
+          branch_id: body.branch_id || null,
+          status: "draft",
+          payment_day: body.payment_day ? Number(body.payment_day) : null,
+          created_by: auth.context.userId,
+          notes: body.notes || null,
+          idempotency_key: idempotencyKey
+        })
+        .select("*")
+        .single();
+      if (periodError) return fail("Erro ao criar período de folha.", 500, periodError.message);
+      period = createdPeriod;
+    }
 
     let employeesQuery = scopeByBranch(auth.supabase.from("employees").select("*, branches:branches!employees_branch_id_fkey(name)").eq("active", true).order("full_name"), auth.context, "branch_id");
     if (body.branch_id) employeesQuery = employeesQuery.eq("branch_id", body.branch_id);
@@ -208,6 +279,7 @@ export async function POST(request: NextRequest) {
       startDate: body.start_date,
       endDate: body.end_date
     });
+    const pendingHolidays = pendingHolidayDecisions(holidays);
     const { data: overtimeReviews, error: overtimeError } = await auth.supabase
       .from("overtime_reviews")
       .select("*")
@@ -260,6 +332,16 @@ export async function POST(request: NextRequest) {
             salary_snapshot: salary.snapshot
           },
           settings,
+          formula: {
+            base_rule: calculation.base_calculation_rule,
+            base_salary: calculation.base_salary,
+            daily_rate: calculation.daily_rate,
+            expected_days: calculation.expected_work_days,
+            paid_holiday_days: calculation.paid_holiday_days,
+            absence_discount: calculation.absence_discount_amount,
+            overtime_amount: calculation.overtime_amount,
+            extra_day_amount: calculation.extra_day_amount
+          },
           generated_at: new Date().toISOString()
         }
       };
@@ -288,6 +370,7 @@ export async function POST(request: NextRequest) {
       { key: "poor_gps_accuracy", label: "Pontos com GPS impreciso pendentes", count: scopedEntries.filter((entry: any) => entry.status === "pending_review" && Number(entry.gps_accuracy_meters || 0) > 0).length },
       { key: "pending_justifications", label: "Justificativas pendentes", count: scopedJustifications.filter((item: any) => item.status === "pending").length },
       { key: "pending_overtime", label: "Horas extras pendentes", count: scopedOvertime.filter((item: any) => item.status === "pending").length },
+      { key: "pending_holiday_decisions", label: "Feriados aguardando decisão de funcionamento", count: pendingHolidays.length },
       { key: "missing_items", label: "Folha sem itens", count: items.length === 0 ? 1 : 0 }
     ].filter((item) => item.count > 0);
     const generatedStatus = incompleteReasons.length > 0 ? "incomplete_preview" : "draft";
@@ -314,9 +397,17 @@ export async function POST(request: NextRequest) {
       action: "generate",
       entity: "payroll_periods",
       entityId: period.id,
-      newData: { period: updatedPeriod || period, items: items.length, generatedStatus }
+      newData: { period: updatedPeriod || period, items: items.length, generatedStatus, regenerated }
     });
-    return ok({ period: updatedPeriod || period, itemsCreated: items.length, generatedStatus });
+    return ok({
+      period: updatedPeriod || period,
+      itemsCreated: items.length,
+      generatedStatus,
+      regenerated,
+      message: regenerated
+        ? "Folha recalculada com os dados, decisões de feriado e ajustes mais recentes."
+        : undefined
+    });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Erro ao gerar folha.", 500);
   }
@@ -326,8 +417,10 @@ export async function PATCH(request: NextRequest) {
   const auth = await requireAdmin(request);
   if ("error" in auth) return auth.error;
   if (!canViewFinancialData(auth.context)) return fail("Você não tem permissão para acessar folha de pagamento.", 403);
-  const body = await readJson<any>(request);
-  if (!body.id || !body.status) return fail("Informe período e status.", 400);
+  const rawBody = await readJson<unknown>(request);
+  const parsedBody = payrollStatusSchema.safeParse(rawBody);
+  if (!parsedBody.success) return fail(zodErrorMessage(parsedBody.error), 400);
+  const body = parsedBody.data;
   const { data: oldData } = await auth.supabase.from("payroll_periods").select("*").eq("id", body.id).maybeSingle();
   if (!oldData) return fail("Folha não encontrada.", 404);
   if (oldData.branch_id && !canAccessBranch(auth.context, oldData.branch_id)) return fail("Você não tem acesso a esta folha.", 403);
@@ -349,6 +442,17 @@ export async function PATCH(request: NextRequest) {
     await auth.supabase.from("payroll_closure_checks").delete().eq("payroll_period_id", body.id);
     await auth.supabase.from("payroll_closure_checks").insert(checklist.checks.map((item) => ({ payroll_period_id: body.id, ...item })));
     const overrideReason = String(body.overrideReason || "").trim();
+    const pendingHolidayCheck = checklist.checks.find((item) => item.check_type === "pending_holiday_decisions" && item.count > 0);
+    if (pendingHolidayCheck) {
+      return ok({
+        requiresClosureReview: true,
+        holidayDecisionBlocking: true,
+        allowMasterOverride: false,
+        checklist: checklist.checks,
+        summary: checklist.summary,
+        message: "Existem feriados sem decisão de funcionamento. Defina se cada unidade abrirá ou ficará fechada antes de concluir a folha. Esta pendência não permite fechamento com exceção."
+      });
+    }
     if (checklist.hasCritical && auth.context.role !== "master_admin") {
       return ok({
         requiresClosureReview: true,

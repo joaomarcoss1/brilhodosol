@@ -153,6 +153,26 @@ export async function adminFetch<T>(
   }
 }
 
+
+async function fetchAdminDownload(path: string, init: RequestInit, timeoutMs = 90_000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = init.signal;
+  const abortFromExternal = () => controller.abort();
+  externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+  try {
+    return await fetch(path, { ...init, signal: controller.signal, cache: "no-store" });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("A geração do arquivo excedeu o tempo limite. Reduza o período ou os filtros e tente novamente.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
+  }
+}
+
 export async function downloadAdminFile(path: string, filename: string) {
   const config = getBrowserSupabaseConfigStatus();
   if (!config.configured) throw new Error(config.message);
@@ -163,7 +183,7 @@ export async function downloadAdminFile(path: string, filename: string) {
   if (!session?.access_token)
     throw new Error("Sessão administrativa expirada.");
 
-  const response = await fetch(path, {
+  const response = await fetchAdminDownload(path, {
     headers: {
       Authorization: `Bearer ${session.access_token}`,
     },
@@ -206,7 +226,7 @@ export async function downloadAdminPostFile(
   if (!session?.access_token)
     throw new Error("Sessão administrativa expirada.");
 
-  const response = await fetch(path, {
+  const response = await fetchAdminDownload(path, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${session.access_token}`,

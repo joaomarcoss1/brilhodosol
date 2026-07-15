@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isNonWorkingDay, parseTimeToMinutes, weekdayFromDateKey } from "@/lib/calculations";
 import type { Employee, MinimalHoliday } from "@/types/domain";
+import { fetchOperationalHolidays } from "@/lib/services/holiday-operations";
 
 export type WorkScheduleRule = {
   id?: string;
@@ -166,14 +167,13 @@ export async function fetchScheduleContext(params: {
     .lte("effective_from", endDate)
     .or(`effective_until.is.null,effective_until.gte.${startDate}`);
 
-  const holidaysQuery = supabase.from("holidays").select("holiday_date,branch_id,type,active").gte("holiday_date", startDate).lte("holiday_date", endDate);
-  if (branchIds?.length) holidaysQuery.in("branch_id", branchIds);
-
-  const [{ data: schedules, error: schedulesError }, { data: holidays, error: holidaysError }] = await Promise.all([schedulesQuery, holidaysQuery]);
+  const [{ data: schedules, error: schedulesError }, holidays] = await Promise.all([
+    schedulesQuery,
+    fetchOperationalHolidays({ supabase, startDate, endDate, branchIds })
+  ]);
   if (schedulesError) throw new Error(schedulesError.message);
-  if (holidaysError) throw new Error(holidaysError.message);
   return {
     schedules: (schedules || []) as WorkScheduleRule[],
-    holidays: (holidays || []) as MinimalHoliday[]
+    holidays
   };
 }

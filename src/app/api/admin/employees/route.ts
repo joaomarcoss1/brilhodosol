@@ -31,6 +31,7 @@ function employeePayload(body: any, includeFinancial = true) {
     employment_type: body.employment_type || "mensalista",
     active: body.active ?? true,
     admission_date: body.admission_date,
+    termination_date: body.termination_date || null,
     expected_start_time: body.expected_start_time || "08:00",
     expected_end_time: body.expected_end_time || "17:00",
     expected_daily_minutes: Number(body.expected_daily_minutes || 480),
@@ -61,8 +62,12 @@ export async function GET(request: NextRequest) {
   const status = request.nextUrl.searchParams.get("status");
   const role = request.nextUrl.searchParams.get("role");
   const paymentDay = request.nextUrl.searchParams.get("paymentDay");
+  const employmentType = request.nextUrl.searchParams.get("employmentType") || request.nextUrl.searchParams.get("employment_type");
   const q = request.nextUrl.searchParams.get("q");
-  let query = auth.supabase.from("employees").select("*, branches:branches!employees_branch_id_fkey(name), employee_salary_history(*)").order("full_name", { ascending: true });
+  const page = Math.max(1, Number(request.nextUrl.searchParams.get("page") || 0));
+  const pageSize = Math.min(100, Math.max(10, Number(request.nextUrl.searchParams.get("pageSize") || 25)));
+  const paginated = request.nextUrl.searchParams.has("page");
+  let query = auth.supabase.from("employees").select("*, branches:branches!employees_branch_id_fkey(name), employee_salary_history(*)", { count: "exact" }).order("full_name", { ascending: true });
   query = scopeByBranch(query, auth.context, "branch_id");
   if (branchId) {
     if (!canAccessBranch(auth.context, branchId)) return fail("Você não tem acesso a esta filial.", 403);
@@ -72,11 +77,19 @@ export async function GET(request: NextRequest) {
   if (status === "inactive") query = query.eq("active", false);
   if (role) query = query.ilike("role", `%${role}%`);
   if (paymentDay) query = query.eq("payment_day", Number(paymentDay));
-  if (q) query = query.or(`full_name.ilike.%${q}%,registration_code.ilike.%${q}%`);
-  const { data, error } = await query;
+  if (employmentType) query = query.eq("employment_type", employmentType);
+  if (q) {
+    const safeQ = q.replace(/[,%()]/g, " ").trim();
+    if (safeQ) query = query.or(`full_name.ilike.%${safeQ}%,registration_code.ilike.%${safeQ}%,document.ilike.%${safeQ}%`);
+  }
+  if (paginated) query = query.range((page - 1) * pageSize, page * pageSize - 1);
+  const { data, error, count } = await query;
   if (error) return fail("Erro ao listar funcionários.", 500, error.message);
   const canFinancial = canViewFinancialData(auth.context);
-  return ok({ employees: (data || []).map(publicEmployee).map((employee) => canFinancial ? employee : maskSensitiveEmployeeFields(employee, auth.context)) });
+  return ok({
+    employees: (data || []).map(publicEmployee).map((employee) => canFinancial ? employee : maskSensitiveEmployeeFields(employee, auth.context)),
+    pagination: paginated ? { page, pageSize, total: count || 0 } : undefined
+  });
 }
 
 export async function POST(request: NextRequest) {

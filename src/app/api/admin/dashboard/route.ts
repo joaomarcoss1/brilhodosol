@@ -32,7 +32,6 @@ export async function GET(request: NextRequest) {
         .select("employee_id, branch_id, entry_date, entry_timestamp, action, status, late_minutes, early_leave_minutes")
         .gte("entry_date", periodStart)
         .lte("entry_date", periodEnd), auth.context, "branch_id");
-    const holidaysQuery = auth.supabase.from("holidays").select("holiday_date,branch_id,type,active").gte("holiday_date", periodStart).lte("holiday_date", periodEnd);
     const payrollItemsQuery = scopeByBranch(auth.supabase
         .from("payroll_items")
         .select("employee_name, branch_id, final_amount, overtime_minutes, payroll_periods!inner(start_date,end_date,status)")
@@ -49,10 +48,9 @@ export async function GET(request: NextRequest) {
       openPayrollRes,
       closedPayrollRes,
       overtimeEntriesRes,
-      holidaysRes,
       payrollItemsRes
     ] = await Promise.all([
-      employeesQuery, branchesQuery, todayEntriesQuery, pendingJustificationsQuery, lateTodayQuery, earlyLeaveTodayQuery, pendingOvertimeQuery, openPayrollQuery, closedPayrollQuery, overtimeEntriesQuery, holidaysQuery, payrollItemsQuery
+      employeesQuery, branchesQuery, todayEntriesQuery, pendingJustificationsQuery, lateTodayQuery, earlyLeaveTodayQuery, pendingOvertimeQuery, openPayrollQuery, closedPayrollQuery, overtimeEntriesQuery, payrollItemsQuery
     ]);
 
     for (const response of [
@@ -66,7 +64,6 @@ export async function GET(request: NextRequest) {
       openPayrollRes,
       closedPayrollRes,
       overtimeEntriesRes,
-      holidaysRes,
       payrollItemsRes
     ]) {
       if (response.error) throw new Error(response.error.message);

@@ -119,7 +119,13 @@ export function PayrollPage() {
           request_id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
         })
       });
-      setMessage(data.duplicated ? data.message || "Já existia uma folha para este filtro." : `Folha gerada com ${data.itemsCreated} item(ns).`);
+      setMessage(
+        data.duplicated
+          ? data.message || "Já existia uma folha fechada para este filtro."
+          : data.regenerated
+            ? data.message || `Folha recalculada com ${data.itemsCreated} item(ns).`
+            : `Folha gerada com ${data.itemsCreated} item(ns).`
+      );
       await load(data.period.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao gerar folha.");
@@ -221,13 +227,16 @@ export function PayrollPage() {
     { total: 0, discounts: 0, extras: 0, overtime: 0, gross: 0 }
   ), [items]);
   const isIncompletePreview = period?.status === "incomplete_preview";
+  const hasPendingHolidayDecision = Boolean(
+    period?.closure_snapshot?.reasons?.some?.((reason: any) => reason.key === "pending_holiday_decisions" && Number(reason.count || 0) > 0)
+  );
   const statusTone = period?.status === "paid" ? "green" : closedStatuses.has(period?.status) ? "blue" : isIncompletePreview ? "red" : period ? "yellow" : "neutral";
   const statusLabel = period ? statusLabels[period.status] || period.status : "Selecione uma folha";
   const isMaster = Boolean(adminProfile?.is_master || adminProfile?.role === "master_admin");
   const canManagePayroll = Boolean(adminProfile?.can_manage_payroll || adminProfile?.canViewFinancialData || adminProfile?.can_view_financial);
   const canReview = Boolean(period && canManagePayroll && !closedStatuses.has(period.status) && period.status !== "reviewed");
   const canClose = Boolean(period && canManagePayroll && !closedStatuses.has(period.status) && period.status !== "incomplete_preview");
-  const canCloseWithException = Boolean(period && period.status === "incomplete_preview" && isMaster);
+  const canCloseWithException = Boolean(period && period.status === "incomplete_preview" && isMaster && !hasPendingHolidayDecision);
   const canMarkPaid = Boolean(period && canManagePayroll && ["closed", "closed_with_exceptions"].includes(period.status));
   const canReopen = Boolean(period && ["closed", "closed_with_exceptions", "paid"].includes(period.status) && isMaster);
   const canEditItems = Boolean(period && canManagePayroll && !closedStatuses.has(period.status));
@@ -408,7 +417,8 @@ export function PayrollPage() {
                   <h3 className="text-lg font-black text-amber-950">Checklist de fechamento da folha</h3>
                   <p className="text-sm font-semibold text-amber-900">Resolva as pendências críticas antes de fechar. O sistema bloqueia fechamento inseguro.</p>
                   <div className="grid gap-2 md:grid-cols-2">{(closureReview.checklist || []).filter((item: any) => item.count > 0).map((item: any) => <div key={item.check_type} className="rounded-2xl border border-amber-200 bg-white p-3"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><strong className="text-sm text-slate-950">{item.label}</strong><Badge tone={item.severity === "critical" ? "red" : "yellow"}>{item.count}</Badge></div><p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{item.severity === "critical" ? "Crítica" : item.severity === "warning" ? "Atenção" : "Informativa"}</p></div>)}</div>
-                  {closureReview.allowMasterOverride && period?.status === "incomplete_preview" ? <div className="grid gap-3"><Textarea value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Justificativa formal para fechar com exceção" /><Button disabled={reopenReason.trim().length < 12 || loading} loading={loading} onClick={() => updateStatus("closed", { overrideReason: reopenReason })}>Confirmar fechamento com exceção</Button></div> : null}<Button variant="ghost" onClick={() => setClosureReview(null)}>Entendi, vou resolver as pendências</Button>
+                  {closureReview.holidayDecisionBlocking ? <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-900">Feriados pendentes devem ser decididos na área <strong>Feriados</strong>. Nem o administrador master pode ignorar essa decisão, pois ela define se o dia entra como jornada normal ou dispensa remunerada.</div> : null}
+                  {closureReview.allowMasterOverride && !closureReview.holidayDecisionBlocking && period?.status === "incomplete_preview" ? <div className="grid gap-3"><Textarea value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Justificativa formal para fechar com exceção" /><Button disabled={reopenReason.trim().length < 12 || loading} loading={loading} onClick={() => updateStatus("closed", { overrideReason: reopenReason })}>Confirmar fechamento com exceção</Button></div> : null}<Button variant="ghost" onClick={() => setClosureReview(null)}>Entendi, vou resolver as pendências</Button>
                 </div>
               )}
             </div>

@@ -2,6 +2,7 @@ import { defaultSettings, orderedActions, TIMEZONE } from "@/lib/constants";
 import type {
   DailyRateMode,
   Employee,
+  HolidayOperationStatus,
   HolidayType,
   PayrollPeriodType,
   SystemSettings,
@@ -10,10 +11,13 @@ import type {
 } from "@/types/domain";
 
 export type MinimalHoliday = {
+  id?: string;
   holiday_date: string;
   branch_id: string | null;
   type: HolidayType;
   active: boolean;
+  operation_status?: HolidayOperationStatus;
+  decision_id?: string | null;
 };
 
 export type MinimalJustification = {
@@ -149,12 +153,25 @@ export function calculateWorkedMinutes(entries: Pick<TimeEntry, "action" | "entr
 }
 
 export function isNonWorkingDay(dateKey: string, branchId: string, holidays: MinimalHoliday[]) {
-  return holidays.some(
-    (holiday) =>
-      holiday.active &&
-      holiday.holiday_date === dateKey &&
-      (!holiday.branch_id || holiday.branch_id === branchId) &&
-      ["holiday", "day_off", "no_work"].includes(holiday.type)
+  return holidays.some((holiday) => {
+    if (!holiday.active || holiday.holiday_date !== dateKey) return false;
+    if (holiday.branch_id && holiday.branch_id !== branchId) return false;
+    if (holiday.type === "holiday") {
+      // Feriado aberto é um dia normal. Pendente é tratado como dispensa provisória
+      // para nunca criar desconto antes da decisão administrativa.
+      return holiday.operation_status !== "open";
+    }
+    return ["day_off", "no_work"].includes(holiday.type);
+  });
+}
+
+export function hasPendingHolidayDecision(dateKey: string, branchId: string, holidays: MinimalHoliday[]) {
+  return holidays.some((holiday) =>
+    holiday.active &&
+    holiday.type === "holiday" &&
+    holiday.operation_status === "pending" &&
+    holiday.holiday_date === dateKey &&
+    (!holiday.branch_id || holiday.branch_id === branchId)
   );
 }
 

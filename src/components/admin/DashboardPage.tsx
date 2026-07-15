@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertTriangle, Building2, Clock3, FileCheck2, TrendingUp, Users, WalletCards } from "lucide-react";
+import { AlertTriangle, Building2, CalendarCheck2, Clock3, FileCheck2, TrendingUp, Users, WalletCards } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassName } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
 import { ToastMessage } from "@/components/ui/feedback";
 import { adminFetch } from "@/lib/client/admin-api";
@@ -31,6 +32,7 @@ const summaryCards = [
   ["pointsToday", "Pontos hoje", Clock3],
   ["pendingReview", "Revisões pendentes", FileCheck2],
   ["outsideRadius", "Fora do raio", AlertTriangle],
+  ["pendingHolidays", "Feriados pendentes", CalendarCheck2],
 ] as const;
 
 function BarList({ data }: { data: Array<{ label: string; value: number }> }) {
@@ -57,10 +59,17 @@ export function DashboardPage() {
   const [details, setDetails] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [error, setError] = useState("");
+  const [holidayNotifications, setHolidayNotifications] = useState<any[]>([]);
 
   useEffect(() => {
-    adminFetch<any>("/api/admin/dashboard/summary?v=18")
-      .then((data) => setSummary(data.summary || null))
+    Promise.all([
+      adminFetch<any>("/api/admin/dashboard/summary?v=19"),
+      adminFetch<any>("/api/admin/notifications?v=19")
+    ])
+      .then(([summaryData, notificationData]) => {
+        setSummary(summaryData.summary || null);
+        setHolidayNotifications((notificationData.notifications || []).filter((item: any) => item.notification_type === "holiday_decision" && !item.read_at));
+      })
       .catch((err) => setError(err.message));
   }, []);
 
@@ -89,14 +98,29 @@ export function DashboardPage() {
 
       {error ? <ToastMessage type="error">{error}</ToastMessage> : null}
 
+      {holidayNotifications.length ? (
+        <Card className="mb-4 border-amber-300 bg-gradient-to-r from-amber-50 to-sun-50">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-amber-950"><CalendarCheck2 className="h-5 w-5" /><h2 className="font-black">Decisão de funcionamento pendente</h2></div>
+              <div className="mt-2 grid gap-1 text-sm font-semibold text-amber-900">
+                {holidayNotifications.slice(0, 3).map((notification) => <p key={notification.id}>{notification.message}</p>)}
+                {holidayNotifications.length > 3 ? <p>Mais {holidayNotifications.length - 3} notificação(ões) pendente(s).</p> : null}
+              </div>
+            </div>
+            <Link className={buttonClassName({ variant: "warning", className: "shrink-0" })} href="/admin/feriados">Definir funcionamento</Link>
+          </div>
+        </Card>
+      ) : null}
+
       {!summary ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, index) => (
             <div key={index} className="h-28 animate-pulse rounded-3xl border border-slate-200 bg-white shadow-sm" />
           ))}
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           {summaryCards.map(([key, label, Icon]) => (
             <Card key={key} className="premium-surface">
               <div className="flex min-w-0 items-start justify-between gap-3">

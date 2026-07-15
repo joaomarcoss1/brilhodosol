@@ -26,12 +26,23 @@ export function SettingsPage() {
   async function save() {
     try {
       const payload = {
-        ...settings,
         late_tolerance_minutes: Number(settings.late_tolerance_minutes || 15),
         early_leave_tolerance_minutes: Number(settings.early_leave_tolerance_minutes || 15),
         default_radius_meters: Number(settings.default_radius_meters || 900),
         max_gps_accuracy_meters: Number(settings.max_gps_accuracy_meters || 100),
-        overtime_multiplier: Number(settings.overtime_multiplier || 1.5)
+        overtime_multiplier: Number(settings.overtime_multiplier || 1.5),
+        holiday_decision_notification_days: Number(settings.holiday_decision_notification_days || 7),
+        daily_rate_calculation: settings.daily_rate_calculation || "expected_work_days",
+        require_review_on_poor_gps_accuracy: Boolean(settings.require_review_on_poor_gps_accuracy ?? true),
+        allow_different_branch_with_authorization: Boolean(settings.allow_different_branch_with_authorization ?? true),
+        allow_outside_radius_review: Boolean(settings.allow_outside_radius_review),
+        auto_approve_overtime: Boolean(settings.auto_approve_overtime),
+        primary_color: settings.primary_color || "#078d3a",
+        secondary_color: settings.secondary_color || "#ffc107",
+        company_name: settings.company_name || "",
+        company_document: settings.company_document || "",
+        company_address: settings.company_address || "",
+        report_footer: settings.report_footer || ""
       };
       const data = await adminFetch<any>("/api/admin/settings", {
         method: "PUT",
@@ -83,6 +94,9 @@ export function SettingsPage() {
           </label>
           <Field label="Multiplicador de hora extra">
             <Input type="number" step="0.1" value={settings.overtime_multiplier || 1.5} onChange={(event) => setValue("overtime_multiplier", event.target.value)} />
+          </Field>
+          <Field label="Avisar sobre feriados com antecedência (dias)">
+            <Input type="number" min={1} max={60} value={settings.holiday_decision_notification_days || 7} onChange={(event) => setValue("holiday_decision_notification_days", event.target.value)} />
           </Field>
           <Field label="Forma de cálculo da diária">
             <Select value={settings.daily_rate_calculation || "expected_work_days"} onChange={(event) => setValue("daily_rate_calculation", event.target.value)}>

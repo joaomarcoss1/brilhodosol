@@ -3,6 +3,7 @@
 import {
   Building2,
   CalendarDays,
+  ChevronDown,
   ClipboardCheck,
   ClipboardList,
   FileSpreadsheet,
@@ -65,7 +66,7 @@ const nav = [
     label: "Importar",
     icon: FileSpreadsheet,
     group: "mais",
-    roles: ["master_admin", "admin", "admin_geral", "rh_financeiro"],
+    roles: ["master_admin", "admin", "admin_geral", "rh_financeiro", "gerente_filial"],
   },
   {
     href: "/admin/gerencia-filial",
@@ -154,6 +155,13 @@ const nav = [
     ],
   },
   {
+    href: "/admin/feriados",
+    label: "Feriados",
+    icon: CalendarDays,
+    group: "folha",
+    roles: ["master_admin", "admin", "admin_geral", "rh_financeiro", "gerente_filial"],
+  },
+  {
     href: "/admin/folha",
     label: "Folha",
     icon: WalletCards,
@@ -171,7 +179,7 @@ const nav = [
     href: "/admin/banco-de-horas",
     label: "Banco de horas",
     icon: TimerReset,
-    group: "mais",
+    group: "folha",
     roles: [
       "master_admin",
       "admin",
@@ -228,6 +236,15 @@ const nav = [
     roles: ["master_admin", "admin_geral"],
   },
 ];
+
+
+const navGroups = [
+  { key: "inicio", label: "Visão geral" },
+  { key: "equipe", label: "Equipe" },
+  { key: "ponto", label: "Ponto" },
+  { key: "folha", label: "Financeiro" },
+  { key: "mais", label: "Gestão" },
+] as const;
 
 type Profile = {
   role?: string;
@@ -394,25 +411,40 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             {profile?.role || "master_admin"}
           </p>
         </div>
-        <nav className="mt-4 grid flex-1 content-start gap-1 overflow-y-auto pr-1">
-          {visibleNav.map((item) => {
-            const Icon = item.icon;
-            const active = pathname === item.href;
+        <nav className="mt-4 grid flex-1 content-start gap-2 overflow-y-auto pr-1" aria-label="Navegação administrativa">
+          {navGroups.map((group) => {
+            const items = visibleNav.filter((item) => item.group === group.key);
+            if (!items.length) return null;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                prefetch={false}
-                className={clsx(
-                  "flex min-w-0 items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-extrabold leading-tight transition-all",
-                  active
-                    ? "bg-brand-600 text-white shadow-[0_14px_30px_rgba(7,141,58,0.18)]"
-                    : "text-slate-700 hover:-translate-y-0.5 hover:bg-brand-50 hover:text-brand-800",
-                )}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 truncate">{item.label}</span>
-              </Link>
+              <details key={group.key} open className="group rounded-2xl">
+                <summary className="flex cursor-pointer list-none items-center justify-between rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 hover:bg-slate-50">
+                  {group.label}
+                  <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
+                </summary>
+                <div className="mt-1 grid gap-1">
+                  {items.map((item) => {
+                    const Icon = item.icon;
+                    const active = pathname === item.href;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        prefetch={false}
+                        aria-current={active ? "page" : undefined}
+                        className={clsx(
+                          "flex min-w-0 items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-extrabold leading-tight transition-all",
+                          active
+                            ? "bg-brand-600 text-white shadow-[0_14px_30px_rgba(7,141,58,0.18)]"
+                            : "text-slate-700 hover:-translate-y-0.5 hover:bg-brand-50 hover:text-brand-800",
+                        )}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0 truncate">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </details>
             );
           })}
         </nav>

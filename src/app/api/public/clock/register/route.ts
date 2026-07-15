@@ -10,6 +10,7 @@ import {
   nowIso,
   parseTimeToMinutes
 } from "@/lib/calculations";
+import { fetchOperationalHolidays } from "@/lib/services/holiday-operations";
 import { computeEarlyLeaveFromJourney, computeLateFromJourney, resolveExpectedJourney } from "@/lib/services/schedule-engine";
 import { getSupabaseAdmin } from "@/lib/server/db";
 import { fail, ok, readJson } from "@/lib/server/http";
@@ -144,7 +145,7 @@ export async function POST(request: NextRequest) {
     const poorAccuracy = Boolean(gpsAccuracy && gpsAccuracy > maxAccuracy);
     const timestamp = nowIso();
     const deviceInfo = body.deviceInfo || request.headers.get("user-agent") || "dispositivo não identificado";
-    const [{ data: schedules }, { data: holidays }] = await Promise.all([
+    const [schedulesResult, holidays] = await Promise.all([
       supabase
         .from("work_schedules")
         .select("*")
@@ -152,13 +153,20 @@ export async function POST(request: NextRequest) {
         .eq("active", true)
         .lte("effective_from", today)
         .or(`effective_until.is.null,effective_until.gte.${today}`),
-      supabase.from("holidays").select("holiday_date,branch_id,type,active").eq("active", true).eq("holiday_date", today)
+      fetchOperationalHolidays({
+        supabase,
+        startDate: today,
+        endDate: today,
+        branchIds: [selectedBranchId]
+      })
     ]);
+    if (schedulesResult.error) return fail("Erro ao buscar escala do funcionário.", 500, schedulesResult.error.message);
+    const schedules = schedulesResult.data || [];
     const journey = resolveExpectedJourney({
       employee,
       dateKey: today,
       schedules: (schedules || []) as any,
-      holidays: (holidays || []) as any
+      holidays: holidays as any
     });
 
     const { data: todayEntries, error: todayError } = await supabase

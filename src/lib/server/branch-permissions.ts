@@ -100,8 +100,8 @@ export function scopeByBranch(query: any, context: AdminContext, column = "branc
 export function scopeNullableBranchQuery(query: any, context: AdminContext, column = "branch_id") {
   const ids = allowedBranchIds(context);
   if (ids === null) return query;
-  if (!ids.length) return query.eq(column, "00000000-0000-0000-0000-000000000000");
-  return query.in(column, ids);
+  if (!ids.length) return query.is(column, null);
+  return query.or(`${column}.is.null,${column}.in.(${ids.join(",")})`);
 }
 
 export function scopeRowsByBranch<T extends Record<string, any>>(rows: T[], context: AdminContext, key = "branch_id") {

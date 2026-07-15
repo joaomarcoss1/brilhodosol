@@ -2,7 +2,8 @@ import {
   calculateWorkedMinutes,
   eachDateInclusive,
   normalizeMoney,
-  resolveDailyRate
+  resolveDailyRate,
+  weekdayFromDateKey
 } from "@/lib/calculations";
 import { approvedOvertimeForDate } from "@/lib/services/overtime-engine";
 import { resolveExpectedJourney, type WorkScheduleRule } from "@/lib/services/schedule-engine";
@@ -21,16 +22,33 @@ export function calculatePayrollItemWithEngines(params: {
   periodType: PayrollPeriodType;
 }) {
   const { employee, entries, justifications, holidays, schedules, overtimeReviews, settings, startDate, endDate, periodType } = params;
-  const dates = eachDateInclusive(startDate, endDate);
+  const periodDates = eachDateInclusive(startDate, endDate);
+  const dates = periodDates.filter((date) =>
+    (!employee.admission_date || date >= employee.admission_date) &&
+    (!employee.termination_date || date <= employee.termination_date)
+  );
+  const eligibilityRatio = periodDates.length ? dates.length / periodDates.length : 0;
   const expectedDays = dates.filter((date) => resolveExpectedJourney({ employee, dateKey: date, schedules, holidays }).expected).length;
-  const businessDays = dates.filter((date) => {
-    const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
-    const isWeekend = weekday === 0 || weekday === 6;
-    const isHoliday = holidays.some((holiday) => holiday.active && holiday.holiday_date === date && (!holiday.branch_id || holiday.branch_id === employee.branch_id));
-    return !isWeekend && !isHoliday;
+  const paidHolidayDays = dates.filter((date) => {
+    if (!employee.work_days.includes(weekdayFromDateKey(date))) return false;
+    return holidays.some((holiday) =>
+      holiday.active && holiday.type === "holiday" && holiday.holiday_date === date &&
+      (!holiday.branch_id || holiday.branch_id === employee.branch_id) &&
+      holiday.operation_status !== "open"
+    );
   }).length;
-  const dailyRateBaseDays = settings.daily_rate_calculation === "business_days" ? businessDays : expectedDays;
-  const dailyRate = resolveDailyRate(employee, dailyRateBaseDays, settings.daily_rate_calculation);
+  const businessDays = dates.filter((date) => {
+    const weekday = weekdayFromDateKey(date);
+    return weekday !== 0 && weekday !== 6;
+  }).length;
+
+  const isSalaried = employee.employment_type === "mensalista" || employee.employment_type === "quinzenal";
+  const dailyRate = isSalaried
+    ? employee.daily_rate_mode === "manual" && employee.daily_rate
+      ? normalizeMoney(employee.daily_rate)
+      : normalizeMoney(Number(employee.monthly_salary || 0) / 30)
+    : resolveDailyRate(employee, Math.max(1, expectedDays + paidHolidayDays), settings.daily_rate_calculation);
+  const dailyRateBaseDays = isSalaried ? 30 : Math.max(1, expectedDays + paidHolidayDays);
 
   let workedDays = 0;
   let approvedAbsences = 0;
@@ -60,8 +78,7 @@ export function calculatePayrollItemWithEngines(params: {
       workedDays += journey.expected ? 1 : 0;
       extraDays += journey.expected ? 0 : 1;
       const workedMinutes = calculateWorkedMinutes(dayEntries);
-      const calculatedExtra = Math.max(0, workedMinutes - (journey.expected ? journey.expected_daily_minutes : 0));
-      calculatedOvertimeMinutes += calculatedExtra;
+      calculatedOvertimeMinutes += Math.max(0, workedMinutes - (journey.expected ? journey.expected_daily_minutes : 0));
       approvedOvertimeMinutes += approvedOvertimeForDate(overtimeReviews, employee.id, date);
       continue;
     }
@@ -79,26 +96,40 @@ export function calculatePayrollItemWithEngines(params: {
     }
   }
 
-  const baseSalary =
-    employee.employment_type === "diarista"
-      ? normalizeMoney(dailyRate * workedDays)
-      : employee.employment_type === "mensalista" && periodType === "monthly"
-        ? normalizeMoney(employee.monthly_salary)
-        : normalizeMoney(dailyRate * expectedDays);
+  let baseSalary = 0;
+  let baseRule = "daily_worked";
+  if (employee.employment_type === "diarista") {
+    baseSalary = normalizeMoney(dailyRate * (workedDays + paidHolidayDays));
+    baseRule = "diarista_worked_plus_paid_holidays";
+  } else if (periodType === "monthly") {
+    baseSalary = normalizeMoney(Number(employee.monthly_salary || 0) * eligibilityRatio);
+    baseRule = eligibilityRatio < 1 ? "monthly_prorated_employment_period" : "monthly_100_percent";
+  } else if (periodType === "biweekly") {
+    baseSalary = normalizeMoney(Number(employee.monthly_salary || 0) * 0.5 * eligibilityRatio);
+    baseRule = eligibilityRatio < 1 ? "biweekly_50_percent_prorated" : "biweekly_50_percent";
+  } else {
+    baseSalary = normalizeMoney(dailyRate * expectedDays);
+    baseRule = "custom_expected_days";
+  }
 
   const expectedDailyMinutes = Number(employee.expected_daily_minutes || 480);
-  const hourValue = expectedDailyMinutes > 0 ? dailyRate / expectedDailyMinutes : 0;
+  const minuteValue = expectedDailyMinutes > 0 ? dailyRate / expectedDailyMinutes : 0;
   const absenceDiscount = employee.employment_type === "diarista" ? 0 : normalizeMoney(discountedAbsences * dailyRate);
-  const overtimeAmount = normalizeMoney(approvedOvertimeMinutes * hourValue * Number(settings.overtime_multiplier || 1));
+  const overtimeAmount = normalizeMoney(approvedOvertimeMinutes * minuteValue * Number(settings.overtime_multiplier || 1));
   const extraDayAmount = normalizeMoney(extraDays * dailyRate);
-  const finalAmount = normalizeMoney(baseSalary - absenceDiscount + overtimeAmount + extraDayAmount);
+  const finalAmount = normalizeMoney(Math.max(0, baseSalary - absenceDiscount + overtimeAmount + extraDayAmount));
 
   return {
     base_salary: baseSalary,
+    base_calculation_rule: baseRule,
     daily_rate: dailyRate,
     daily_rate_base_days: dailyRateBaseDays,
     business_days: businessDays,
+    eligible_calendar_days: dates.length,
+    period_calendar_days: periodDates.length,
+    eligibility_ratio: eligibilityRatio,
     expected_work_days: expectedDays,
+    paid_holiday_days: paidHolidayDays,
     worked_days: workedDays,
     approved_absences: approvedAbsences,
     pending_absences: pendingAbsences,

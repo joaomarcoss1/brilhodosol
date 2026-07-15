@@ -3,6 +3,28 @@ import { getSupabaseAdmin, getSupabaseAuthClient } from "@/lib/server/db";
 import { fail, ok, readJson } from "@/lib/server/http";
 import { writeAuditLog } from "@/lib/server/audit";
 
+async function findAuthUserByEmail(supabase: ReturnType<typeof getSupabaseAdmin>, email: string) {
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error(error.message);
+    const user = data?.users?.find((item) => String(item.email || "").toLowerCase() === email.toLowerCase());
+    if (user) return user;
+    if (!data?.users?.length || data.users.length < 200) break;
+  }
+  return null;
+}
+
+
+export async function GET() {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { count, error } = await supabase.from("admin_users").select("id", { count: "exact", head: true }).eq("role", "master_admin").eq("active", true);
+    if (error) return fail("Não foi possível verificar a configuração inicial.", 500, error.message);
+    return ok({ setupAvailable: (count || 0) === 0 && Boolean(process.env.MASTER_SETUP_TOKEN && process.env.MASTER_ADMIN_EMAIL) });
+  } catch (error) {
+    return fail("Não foi possível verificar a configuração inicial.", 500, error instanceof Error ? error.message : error);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,7 +73,9 @@ export async function POST(request: NextRequest) {
       const requestedEmail = String(body.email || masterEmail).trim().toLowerCase();
       const password = String(body.password || process.env.MASTER_ADMIN_PASSWORD || "").trim();
       if (requestedEmail !== masterEmail.toLowerCase()) return fail("O e-mail informado não corresponde ao MASTER_ADMIN_EMAIL.", 403);
-      if (password.length < 6) return fail("Informe uma senha master com pelo menos 6 caracteres.", 400);
+      if (password.length < 10 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        return fail("Informe uma senha master com pelo menos 10 caracteres, contendo letra e número.", 400);
+      }
 
       const { data: createdUser, error: createError } = await supabase.auth.admin.createUser({
         email: requestedEmail,
@@ -66,7 +90,18 @@ export async function POST(request: NextRequest) {
       if (createError && !createError.message.toLowerCase().includes("already")) {
         return fail("Não foi possível criar o usuário master no Supabase Auth.", 500, createError.message);
       }
-      authUserId = createdUser.user?.id || null;
+      const authUser = createdUser.user || await findAuthUserByEmail(supabase, requestedEmail);
+      if (!authUser?.id) return fail("Não foi possível localizar ou criar o usuário master no Supabase Auth.", 500);
+      const { error: updateAuthError } = await supabase.auth.admin.updateUserById(authUser.id, {
+        password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: body.name || masterName,
+          role: "master_admin"
+        }
+      });
+      if (updateAuthError) return fail("Não foi possível atualizar o usuário master no Supabase Auth.", 500, updateAuthError.message);
+      authUserId = authUser.id;
       email = requestedEmail;
     }
 

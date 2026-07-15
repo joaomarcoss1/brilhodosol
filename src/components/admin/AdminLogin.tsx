@@ -14,7 +14,6 @@ export function AdminLogin() {
   const supabaseConfig = getBrowserSupabaseConfigStatus();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [setupToken, setSetupToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -27,19 +26,6 @@ export function AdminLogin() {
       if (!supabaseConfig.configured) throw new Error(supabaseConfig.message);
 
       const supabase = createBrowserSupabaseClient();
-
-      if (setupToken.trim()) {
-        const response = await fetch("/api/admin/bootstrap-master", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ setupToken, email, password })
-        });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Não foi possível ativar o admin master.");
-        setMessage(payload.message);
-      }
 
       const { data, error: signError } = await supabase.auth.signInWithPassword({ email, password });
       if (signError || !data.session) throw new Error(signError?.message || "Login inválido.");
@@ -100,9 +86,6 @@ export function AdminLogin() {
               <Field label="Senha">
                 <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="••••••••" className="rounded-2xl" />
               </Field>
-              <Field label="Token master inicial" hint="Use apenas na primeira ativação do admin master.">
-                <Input value={setupToken} onChange={(event) => setSetupToken(event.target.value)} type="password" className="rounded-2xl" />
-              </Field>
               <Button onClick={login} disabled={loading || !email || !password || !supabaseConfig.configured} size="lg" className="w-full rounded-2xl">
                 <LockKeyhole className="h-5 w-5" />
                 Entrar
@@ -119,7 +102,7 @@ export function AdminLogin() {
             {error ? <p className="mt-4 rounded-2xl bg-red-50 p-3 text-sm font-bold text-red-800">{error}</p> : null}
             <div className="mt-5 flex items-start gap-2 rounded-2xl bg-slate-50 p-3 text-xs text-slate-600">
               <KeyRound className="mt-0.5 h-4 w-4 text-brand-700" />
-              <span>Funcionários não usam esta área. O painel exige usuário Supabase Auth e perfil admin ativo.</span>
+              <span>Funcionários não usam esta área. A configuração inicial do master fica em uma rota separada e é bloqueada após a ativação.</span>
             </div>
           </section>
         </div>

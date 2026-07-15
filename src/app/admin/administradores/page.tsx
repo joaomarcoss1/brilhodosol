@@ -15,7 +15,7 @@ const fields: ResourceField[] = [
     label: "Senha inicial",
     type: "password",
     hiddenOnEdit: true,
-    placeholder: "Obrigatória para criar um login que ainda não existe",
+    placeholder: "Mínimo de 10 caracteres, com letras e números",
   },
   {
     name: "role",
@@ -40,6 +40,14 @@ const fields: ResourceField[] = [
     placeholder: "Deixe vazio para acesso geral, conforme a permissão",
   },
   {
+    name: "allowed_branch_ids",
+    label: "Filiais permitidas adicionais",
+    type: "multiselect",
+    optionsEndpoint: "/api/admin/options/branches?status=all&screen=admins-v019",
+    optionsKey: "branches",
+    optionLabel: "name",
+  },
+  {
     name: "can_view_financial_data",
     label: "Pode ver dados financeiros",
     type: "checkbox",
@@ -55,6 +63,11 @@ const columns: TableColumn[] = [
     key: "branches",
     label: "Filial",
     render: (item: any) => item.branches?.name || "Todas/geral",
+  },
+  {
+    key: "allowed_branch_ids",
+    label: "Acesso regional",
+    render: (item: any) => Array.isArray(item.allowed_branch_ids) && item.allowed_branch_ids.length ? `${item.allowed_branch_ids.length} filial(is)` : "Somente principal/geral",
   },
   {
     key: "auth_user_id",
@@ -76,6 +89,7 @@ const columns: TableColumn[] = [
 const defaults = {
   role: "admin_geral",
   branch_id: "",
+  allowed_branch_ids: [],
   active: true,
   can_view_financial_data: false,
 };
@@ -89,6 +103,8 @@ export default function Page() {
       collectionKey="admins"
       fields={fields}
       columns={columns}
+      serverPagination
+      pageSize={25}
       defaultValues={defaults}
     />
   );

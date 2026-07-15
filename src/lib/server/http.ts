@@ -5,20 +5,16 @@ export function ok<T>(data: T, init?: ResponseInit) {
 }
 
 export function fail(message: string, status = 400, details?: unknown) {
-  return NextResponse.json(
-    {
-      error: message,
-      details
-    },
-    { status }
-  );
+  const payload: { error: string; details?: unknown } = { error: message };
+  if (process.env.NODE_ENV !== "production" && details !== undefined) payload.details = details;
+  return NextResponse.json(payload, { status });
 }
 
 export async function readJson<T = Record<string, unknown>>(request: Request): Promise<T> {
   try {
     return (await request.json()) as T;
   } catch {
-    return {} as T;
+    throw new Error("Corpo JSON inválido.");
   }
 }
 

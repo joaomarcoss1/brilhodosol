@@ -3,7 +3,7 @@
 import { AlertTriangle, CheckCircle2, ClipboardList, FileSpreadsheet, Lock, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { AdminShell } from "@/components/admin/AdminShell";
-import { Button } from "@/components/ui/button";
+import { buttonClassName } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
 
 const steps = [
@@ -22,11 +22,9 @@ export function ClosingPage() {
           title="Fechamento mensal"
           description="Fluxo guiado para fechar o ponto e a folha do supermercado com segurança, auditoria e conferência por filial."
         />
-        <Link href="/admin/folha">
-          <Button className="w-full lg:w-auto">
-            <WalletCards className="h-4 w-4" />
-            Abrir folha
-          </Button>
+        <Link className={buttonClassName({ className: "w-full lg:w-auto" })} href="/admin/folha">
+          <WalletCards className="h-4 w-4" />
+          Abrir folha
         </Link>
       </div>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -72,11 +70,9 @@ export function ClosingPage() {
             <p>• Pontos com GPS impreciso ou fora do raio entram na fila de revisão.</p>
             <p>• Folhas fechadas usam snapshot e não mudam com alterações futuras.</p>
           </div>
-          <Link className="mt-5 block" href="/admin/inconsistencias">
-            <Button variant="secondary" className="w-full">
-              <AlertTriangle className="h-4 w-4" />
-              Ver inconsistências
-            </Button>
+          <Link className={buttonClassName({ variant: "secondary", className: "mt-5 w-full" })} href="/admin/inconsistencias">
+            <AlertTriangle className="h-4 w-4" />
+            Ver inconsistências
           </Link>
         </Card>
       </div>

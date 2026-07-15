@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/server/auth";
 import { writeAuditLog } from "@/lib/server/audit";
 import { assertHolidayInScope, canAccessBranch, canAccessAllBranches, scopeHolidayQuery } from "@/lib/server/branch-permissions";
 import { fail, ok, readJson } from "@/lib/server/http";
+import { holidaySchema, zodErrorMessage } from "@/lib/validation/schemas";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAdmin(request);
@@ -19,7 +20,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await requireAdmin(request);
   if ("error" in auth) return auth.error;
-  const body = await readJson<any>(request);
+  const rawBody = await readJson<unknown>(request);
+  const parsedBody = holidaySchema.safeParse(rawBody);
+  if (!parsedBody.success) return fail(zodErrorMessage(parsedBody.error), 400);
+  const body = parsedBody.data;
   const branchId = body.branch_id || null;
   if (branchId && !canAccessBranch(auth.context, branchId)) return fail("Você não tem permissão para acessar dados desta filial.", 403);
   if (!branchId && !canAccessAllBranches(auth.context)) return fail("Feriados globais são restritos à administração geral.", 403);
@@ -41,7 +45,10 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const auth = await requireAdmin(request);
   if ("error" in auth) return auth.error;
-  const body = await readJson<any>(request);
+  const rawBody = await readJson<unknown>(request);
+  const parsedBody = holidaySchema.safeParse(rawBody);
+  if (!parsedBody.success) return fail(zodErrorMessage(parsedBody.error), 400);
+  const body = parsedBody.data;
   if (!body.id) return fail("ID obrigatório.", 400);
   const scopeError = await assertHolidayInScope({ supabase: auth.supabase, context: auth.context, holidayId: body.id });
   if (scopeError) return scopeError;
